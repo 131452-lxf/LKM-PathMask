@@ -78,6 +78,12 @@ To hide only from selected app UIDs:
 insmod /data/local/tmp/pathmask.ko target_paths=/data/local/tmp/pathmask-a scope_mode=deny deny_uids=10123
 ```
 
+To hide from everyone except selected app UIDs:
+
+```sh
+insmod /data/local/tmp/pathmask.ko target_paths=/data/local/tmp/pathmask-a scope_mode=allow deny_uids=10123
+```
+
 ## 4. Verify Hiding
 
 ```sh
@@ -144,7 +150,8 @@ TARGET_PATHS=/data/local/tmp/pathmask-a,/data/local/tmp/pathmask-b ./tools/packa
 ```
 
 After installing the KernelSU package, open its WebUI to edit paths, switch
-between global and blacklist mode, select packages, and reload the module.
+between global, blacklist, and whitelist mode, select packages, and reload the
+module.
 
 For late-created `/dev` paths, increase the wait time while packaging:
 

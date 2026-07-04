@@ -24,7 +24,7 @@
 #                    to register, e.g. "newfstatat,statx,openat".
 #                    Or "all" / "none". Empty falls back to the
 #                    template default (faccessat omitted).
-#   SCOPE_MODE      "global" or "deny"
+#   SCOPE_MODE      "global", "deny", or "allow"
 #   DENY_PACKAGES   comma-separated package names
 #   DENY_UIDS       comma-separated UIDs
 #   WAIT_SECONDS    integer seconds

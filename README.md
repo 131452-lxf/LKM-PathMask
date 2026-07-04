@@ -56,7 +56,7 @@ Implemented:
 - Filters `getdents64` results so target entries disappear from directory
   listings.
 - Supports up to 16 target paths per module load.
-- Supports `scope_mode=global` and `scope_mode=deny`.
+- Supports `scope_mode=global`, `scope_mode=deny`, and `scope_mode=allow`.
 - Resolves package names to UIDs in the KernelSU boot service.
 - Stores runtime config under `/data/adb/pathmask`.
 - Migrates old `/data/adb/nohello` config on first PathMask boot.
@@ -154,6 +154,12 @@ Deny scope:
 insmod /data/local/tmp/pathmask.ko target_paths=/data/local/tmp/a scope_mode=deny deny_uids=10123,10124
 ```
 
+Allow scope (hide from everyone except listed UIDs):
+
+```sh
+insmod /data/local/tmp/pathmask.ko target_paths=/data/local/tmp/a scope_mode=allow deny_uids=10123
+```
+
 Disable directory-list filtering:
 
 ```sh
@@ -207,19 +213,22 @@ edits these files for you, but they can also be inspected manually:
   per line. Blank lines and `#` comments are ignored. At least one configured
   path must exist before the module is loaded.
 - `/data/adb/pathmask/scope_mode.conf`: hide scope. Use `deny` to hide only
-  from configured app UIDs, or `global` to hide from every process.
+  from configured app UIDs, `allow` to hide from everyone except configured
+  app UIDs, or `global` to hide from every process.
 - `/data/adb/pathmask/hide_dirents.conf`: directory-list filtering switch. `1`
   hides target entries from parent directory listings; `0` keeps direct access
   checks only.
-- `/data/adb/pathmask/deny_packages.conf`: package blacklist, one package name
-  per line. The boot service resolves these package names to UIDs before
-  loading the kernel module.
-- `/data/adb/pathmask/deny_uids.conf`: direct UID blacklist, one UID per line.
-  Use this when package-name resolution is unreliable or when testing shell/app
-  UIDs directly.
+- `/data/adb/pathmask/deny_packages.conf`: scoped package list, one package name
+  per line. In `deny` mode these packages are hidden from targets; in `allow`
+  mode they are exempt. The boot service resolves names to UIDs before loading
+  the kernel module.
+- `/data/adb/pathmask/deny_uids.conf`: direct scoped UID list, one UID per line.
+  In `deny` mode these UIDs are hidden from targets; in `allow` mode they are
+  exempt. Use this when package-name resolution is unreliable or when testing
+  shell/app UIDs directly.
 - `/data/adb/pathmask/wait_seconds.conf`: total budget the boot service spends
-  waiting for configured target paths to appear and (in `deny` mode) for
-  package names to resolve to UIDs. Default 60 seconds. Both phases share the
+  waiting for configured target paths to appear and (in `deny` / `allow` mode)
+  for package names to resolve to UIDs. Default 60 seconds. Both phases share the
   same deadline, so the worst-case boot delay is bounded by this value, not by
   twice it. The boot service writes its current phase to
   `/data/adb/pathmask/boot_state` so the WebUI can show whether the module is
@@ -255,7 +264,7 @@ Common failure classes:
 - `Unknown symbol`: kernel export/KMI mismatch.
 - `disagrees about version of symbol module_layout`: kernel modversions CRC
   mismatch; if rebuild is feasible, see "Building from OEM Kernel Source".
-- Empty `deny_uids` in deny mode: package names did not resolve to UIDs.
+- Empty scope UID list in `deny` / `allow` mode: package names did not resolve to UIDs.
 - All targets missing at boot: service skips loading.
 - Old `nohello` module loaded: uninstall the old module and reboot.
 

@@ -288,7 +288,7 @@ button:active {
 
 .segmented {
 	display: grid;
-	grid-template-columns: 1fr 1fr;
+	grid-template-columns: repeat(3, 1fr);
 	border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
 	border-radius: 8px;
 	overflow: hidden;

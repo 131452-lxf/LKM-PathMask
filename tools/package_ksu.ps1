@@ -31,7 +31,7 @@ param(
     # backward compat. Detection via $PSBoundParameters means
     # the caller can intentionally write an empty conf.
     [string]$SyscallHooks,
-    [ValidateSet("global", "deny")]
+    [ValidateSet("global", "deny", "allow")]
     [string]$ScopeMode,
     [string]$DenyPackage,
     [string]$DenyUid,

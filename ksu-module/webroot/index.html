@@ -45,7 +45,7 @@
 					<strong id="targetCount">0</strong>
 				</div>
 				<div class="metric">
-					<span>黑名单 UID</span>
+					<span id="uidMetricLabel">作用 UID</span>
 					<strong id="uidCount">0</strong>
 				</div>
 			</section>
@@ -84,6 +84,10 @@
 						<input type="radio" name="scope" value="deny">
 						<span>黑名单</span>
 					</label>
+					<label>
+						<input type="radio" name="scope" value="allow">
+						<span>白名单</span>
+					</label>
 				</div>
 				<label class="switchRow">
 					<span>从 ls 列表中抹掉
@@ -121,7 +125,7 @@
 
 			<section class="panel">
 				<div class="sectionTitle">
-					<h2>应用黑名单</h2>
+					<h2 id="packagePanelTitle">应用黑名单</h2>
 					<div class="inlineControls">
 						<label class="miniToggle">
 							<input id="showSystemInput" type="checkbox">
@@ -131,6 +135,7 @@
 					</div>
 				</div>
 				<input id="searchInput" class="search" type="search" placeholder="搜索包名">
+				<p id="scopeListHint" class="hint">黑名单模式：勾选的应用会看不到隐藏路径。</p>
 				<div id="appList" class="appList"></div>
 			</section>
 
@@ -149,7 +154,7 @@
 					<span>路径出现 + 包名解析的总等待秒数</span>
 					<input id="waitSecondsInput" type="number" min="1" max="600" step="1" inputmode="numeric" value="60">
 				</label>
-				<p class="hint">默认 60 秒。开机时 service.sh 会用这一段时间等待隐藏路径出现，并在 deny 模式下等待包名解析为 UID。两个阶段共用同一段预算，到期就跳过加载。包名解析慢的设备可以调大。</p>
+				<p class="hint">默认 60 秒。开机时 service.sh 会用这一段时间等待隐藏路径出现，并在 deny / allow 模式下等待包名解析为 UID。两个阶段共用同一段预算，到期就跳过加载。包名解析慢的设备可以调大。</p>
 			</section>
 		</section>
 
@@ -253,7 +258,7 @@
 			</div>
 			<div class="modalBody">
 				<h3>路径</h3>
-				<p>每行一个目标，绝对路径。匹配的文件 / 目录会从黑名单 UID 视角变为不存在。</p>
+				<p>每行一个目标，绝对路径。匹配的文件 / 目录会从当前作用范围内的 UID 视角变为不存在。</p>
 
 				<h3><code>???</code> 通配符</h3>
 				<p>任意一段路径名（不跨 <code>/</code>），等价于 shell <code>*</code> 但写起来不会被误读。例如 <code>/dev/???/scene_mode_category</code> 会命中 <code>/dev/asldpx_c/scene_mode_category</code>、<code>/dev/xcscvgtp/scene_mode_category</code> 等任意 8 字符随机父目录。</p>

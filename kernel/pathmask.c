@@ -60,6 +60,7 @@
 enum pathmask_scope_mode {
 	SCOPE_GLOBAL = 0,
 	SCOPE_DENY,
+	SCOPE_ALLOW,
 };
 
 static char *target_path = "/data/local/tmp/pathmask";
@@ -137,11 +138,11 @@ MODULE_PARM_DESC(syscall_hooks,
 
 static char scope_mode[16] = "global";
 module_param_string(scope_mode, scope_mode, sizeof(scope_mode), 0644);
-MODULE_PARM_DESC(scope_mode, "Hide scope: global or deny");
+MODULE_PARM_DESC(scope_mode, "Hide scope: global, deny, or allow");
 
 static char deny_uids[UID_LIST_LEN];
 module_param_string(deny_uids, deny_uids, sizeof(deny_uids), 0644);
-MODULE_PARM_DESC(deny_uids, "Comma-separated UIDs hidden from targets");
+MODULE_PARM_DESC(deny_uids, "Comma-separated scope UIDs: hidden in deny mode, exempt in allow mode");
 
 struct hidden_target {
 	dev_t dev;
@@ -330,6 +331,10 @@ static inline bool should_hide_for_current(void)
 	euid = __kuid_val(current_euid());
 	fsuid = __kuid_val(current_fsuid());
 
+	if (active_scope == SCOPE_ALLOW)
+		return !(is_denied_uid(uid) || is_denied_uid(euid) ||
+			 is_denied_uid(fsuid));
+
 	if (hide_isolated &&
 	    (is_android_isolated_uid(uid) ||
 	     is_android_isolated_uid(euid) ||
@@ -349,6 +354,11 @@ static int parse_scope_mode(void)
 
 	if (!strcmp(scope_mode, "deny")) {
 		active_scope = SCOPE_DENY;
+		return 0;
+	}
+
+	if (!strcmp(scope_mode, "allow")) {
+		active_scope = SCOPE_ALLOW;
 		return 0;
 	}
 
@@ -404,6 +414,8 @@ static int parse_deny_uids(void)
 
 	if (active_scope == SCOPE_DENY && !deny_uid_count)
 		pr_warn(PM_LOG_PREFIX "scope_mode=deny but deny_uids is empty\n");
+	if (active_scope == SCOPE_ALLOW && !deny_uid_count)
+		pr_warn(PM_LOG_PREFIX "scope_mode=allow but allow UID list is empty; all UIDs hidden\n");
 
 	return 0;
 }
@@ -1089,7 +1101,7 @@ static int __init pathmask_init(void)
 	}
 
 	pr_info(PM_LOG_PREFIX
-		"loaded -- %u target(s) hidden, scope=%s, deny_uid_count=%u hide_isolated=%d enable_syscall_hooks=%d syscall_hooks=\"%s\"\n",
+		"loaded -- %u target(s) hidden, scope=%s, scope_uid_count=%u hide_isolated=%d enable_syscall_hooks=%d syscall_hooks=\"%s\"\n",
 		target_count, scope_mode, deny_uid_count, hide_isolated,
 		enable_syscall_hooks, syscall_hooks);
 	return 0;

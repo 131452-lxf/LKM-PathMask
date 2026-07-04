@@ -69,7 +69,7 @@ KernelSU 管理器里进入 PathMask 的 WebUI。
 页面分为四个页：
 
 ```text
-配置：修改隐藏路径、黑名单 App、UID、模式
+配置：修改隐藏路径、作用范围 App、UID、模式
 诊断：自动检查常见问题
 日志：分页查看脚本日志、内核日志、配置和状态
 报告：复制完整诊断报告
@@ -101,7 +101,7 @@ com.eltavine.duckdetector
 luna.safe.luna
 ```
 
-这叫黑名单模式，也就是只有被勾选或写入的 App 看不到这些路径，其它 App 仍然能正常访问。
+这叫黑名单模式，也就是只有被勾选或写入的 App 看不到这些路径，其它 App 仍然能正常访问。需要反过来“除了某个可信 App，其它都隐藏”时，把作用范围切到白名单模式；白名单里的 App/UID 会被豁免，其它 App 默认看不到目标路径。
 
 ## 保存和热重载有什么区别
 
@@ -111,7 +111,7 @@ luna.safe.luna
 
 `暂停隐藏`：临时卸载 `pathmask`，隐藏立即停止；不会禁用模块，重启或再次点击“保存并热重载”会恢复。
 
-`校验配置`：检查路径格式、黑名单是否为空、UID 是否为数字、目标路径当前是否存在、包名是否可能解析不到 UID。
+`校验配置`：检查路径格式、黑名单/白名单是否为空、UID 是否为数字、目标路径当前是否存在、包名是否可能解析不到 UID。
 
 热重载很方便，但如果某些内核或 KernelSU 环境不稳定，可能会黑屏重启。遇到这种情况就只保存配置，然后手动重启手机。
 
@@ -146,7 +146,7 @@ grep '^pathmask ' /proc/modules
 
 如果日志里出现 `Unknown symbol filp_open`，说明你使用的是旧版 PathMask 包，请更新到新版 Release。
 
-### 4. 黑名单模式不生效
+### 4. 黑名单 / 白名单模式不生效
 
 检查 UID 是否解析到了：
 
@@ -154,7 +154,7 @@ grep '^pathmask ' /proc/modules
 cat /sys/module/pathmask/parameters/deny_uids
 ```
 
-如果为空，说明包名没有解析到 UID。确认 App 已安装、包名写对，或者在 WebUI 里直接填写 UID。
+如果为空，说明包名没有解析到 UID。deny / allow 模式都会因此跳过加载，避免配置实际没有生效。确认 App 已安装、包名写对，或者在 WebUI 里直接填写 UID。
 
 ### 5. 路径没隐藏
 
@@ -231,7 +231,7 @@ PathMask 的持久化配置都放在 `/data/adb/pathmask`。一般建议用 WebU
 
 `/data/adb/pathmask/scope_mode.conf`
 
-隐藏范围。填 `deny` 表示黑名单模式，只对指定 App/UID 隐藏；填 `global` 表示全局隐藏，所有进程都看不到目标路径。
+隐藏范围。填 `deny` 表示黑名单模式，只对指定 App/UID 隐藏；填 `allow` 表示白名单模式，默认隐藏所有 App/UID，但指定 App/UID 被豁免；填 `global` 表示全局隐藏，所有进程都看不到目标路径。
 
 `/data/adb/pathmask/hide_dirents.conf`
 
@@ -239,15 +239,15 @@ PathMask 的持久化配置都放在 `/data/adb/pathmask`。一般建议用 WebU
 
 `/data/adb/pathmask/deny_packages.conf`
 
-黑名单包名列表，一行一个包名。开机脚本会把这些包名解析成 UID，再传给内核模块。包名写错或 App 没安装时，可能解析不到 UID。
+作用范围包名列表，一行一个包名。deny 模式下这些包名会被隐藏；allow 模式下这些包名会被豁免。开机脚本会把这些包名解析成 UID，再传给内核模块。包名写错或 App 没安装时，可能解析不到 UID。
 
 `/data/adb/pathmask/deny_uids.conf`
 
-直接填写 UID，一行一个数字。适合包名解析失败、测试 shell UID，或者你已经知道目标 App UID 的情况。
+直接填写 UID，一行一个数字。deny 模式下这些 UID 会被隐藏；allow 模式下这些 UID 会被豁免。适合包名解析失败、测试 shell UID，或者你已经知道目标 App UID 的情况。
 
 `/data/adb/pathmask/wait_seconds.conf`
 
-开机时等待隐藏路径出现、以及 deny 模式下等待包名解析为 UID 的总秒数预算。默认 60。两个等待阶段共用同一个截止时间，所以最坏情况下只会延迟这么多，而不是这一项的两倍。路径或包名出现得慢的设备可以调大；也可以在 WebUI 的「开机等待秒数」里直接改。
+开机时等待隐藏路径出现、以及 deny / allow 模式下等待包名解析为 UID 的总秒数预算。默认 60。两个等待阶段共用同一个截止时间，所以最坏情况下只会延迟这么多，而不是这一项的两倍。路径或包名出现得慢的设备可以调大；也可以在 WebUI 的「开机等待秒数」里直接改。
 
 `/data/adb/pathmask/boot_state`
 

@@ -263,6 +263,38 @@ function firstLine(text) {
 	return (text || "").split(/\r?\n/)[0]?.trim() || "";
 }
 
+function normalizeScope(value) {
+	const scope = (value || "").trim();
+	if (scope === "global" || scope === "deny" || scope === "allow") return scope;
+	return "deny";
+}
+
+function currentScope() {
+	return normalizeScope(
+		document.querySelector('input[name="scope"]:checked')?.value ||
+		lastSnapshot.scopeText ||
+		"deny"
+	);
+}
+
+function scopeLabel(scope) {
+	const normal = normalizeScope(scope);
+	if (normal === "global") return "全局";
+	if (normal === "allow") return "白名单";
+	return "黑名单";
+}
+
+function updateScopeCopy(scope) {
+	const normal = normalizeScope(scope);
+	setText("#uidMetricLabel", normal === "allow" ? "白名单 UID" : normal === "deny" ? "黑名单 UID" : "作用 UID");
+	setText("#packagePanelTitle", normal === "allow" ? "应用白名单" : normal === "deny" ? "应用黑名单" : "应用列表");
+	setText("#scopeListHint", normal === "allow"
+		? "白名单模式：默认隐藏所有应用，勾选的应用不会被隐藏。"
+		: normal === "deny"
+			? "黑名单模式：勾选的应用会看不到隐藏路径。"
+			: "全局模式：所有应用都会看不到隐藏路径，应用列表不会参与判断。");
+}
+
 // Mirror service.sh's accept-list for boolean *.conf files. The kernel
 // param itself is bool 0/1, but we accept the same human-friendly values
 // here so a manually-edited conf with "true"/"yes" still loads cleanly.
@@ -502,13 +534,14 @@ function renderHealth(items) {
 function updateSummary(snapshot) {
 	const loaded = snapshot.moduleText?.trim();
 	const legacyLoaded = snapshot.legacyModuleText?.trim();
-	const scope = snapshot.scopeText?.trim() || "deny";
+	const scope = normalizeScope(snapshot.scopeText || "deny");
 	const targetCount = linesFromText(snapshot.targetText || "").length || DEFAULT_TARGET_PATHS.length;
 	const sysUidCount = countCsv(snapshot.sysDenyUids || "");
 	const configUidCount = linesFromText(snapshot.uidText || "").length;
 
 	setText("#moduleState", loaded ? "已加载" : legacyLoaded ? "旧模块已加载" : "未加载");
-	setText("#scopeState", scope === "global" ? "全局" : "黑名单");
+	setText("#scopeState", scopeLabel(scope));
+	updateScopeCopy(scope);
 	setText("#targetCount", String(targetCount));
 	setText("#uidCount", String(sysUidCount || configUidCount));
 	statusText.textContent = loaded ? "模块已加载" : "模块未加载";
@@ -519,7 +552,7 @@ function updateHealthList() {
 	const items = [];
 	const loaded = snapshot.moduleText?.trim();
 	const legacyLoaded = snapshot.legacyModuleText?.trim();
-	const scope = (snapshot.scopeText || "deny").trim() === "global" ? "global" : "deny";
+	const scope = currentScope();
 	const targets = collectPaths();
 	const selected = [...selectedPackages];
 	const directUids = linesFromText($("#denyUidsInput").value);
@@ -546,10 +579,12 @@ function updateHealthList() {
 		items.push({ level: "ok", title: "模块文件存在", body: `${files.ko}` });
 	}
 
-	if (scope === "deny" && selected.length === 0 && directUids.length === 0 && sysUids.length === 0) {
-		items.push({ level: "bad", title: "黑名单为空", body: "deny 模式下没有包名或 UID，service.sh 会跳过加载。" });
-	} else if (scope === "deny") {
-		items.push({ level: "ok", title: "黑名单模式有目标", body: `包名 ${selected.length} 个，直接 UID ${directUids.length} 个。` });
+	if ((scope === "deny" || scope === "allow") && selected.length === 0 && directUids.length === 0 && sysUids.length === 0) {
+		const listName = scope === "allow" ? "白名单" : "黑名单";
+		items.push({ level: "bad", title: `${listName}为空`, body: `${scope} 模式下没有包名或 UID，service.sh 会跳过加载。` });
+	} else if (scope === "deny" || scope === "allow") {
+		const listName = scope === "allow" ? "白名单" : "黑名单";
+		items.push({ level: "ok", title: `${listName}模式有目标`, body: `包名 ${selected.length} 个，直接 UID ${directUids.length} 个。` });
 	}
 
 	if (targets.length === 0) {
@@ -557,9 +592,9 @@ function updateHealthList() {
 	} else if (snapshot.targetProbeHidden) {
 		const resolved = Number.isFinite(snapshot.targetResolvedCount) ? snapshot.targetResolvedCount : -1;
 		if (resolved < 0) {
-			items.push({ level: "ok", title: "隐藏路径配置有效", body: `${targets.length} 条路径（global 模式下被自身隐藏，跳过 stat 探测）。` });
+			items.push({ level: "ok", title: "隐藏路径配置有效", body: `${targets.length} 条路径（当前模式下被自身隐藏，跳过 stat 探测）。` });
 		} else if (resolved === targets.length) {
-			items.push({ level: "ok", title: "隐藏路径配置有效", body: `内核已解析 ${resolved}/${targets.length} 条路径（global 模式下 stat 会被自身拦截，故跳过用户态探测）。` });
+			items.push({ level: "ok", title: "隐藏路径配置有效", body: `内核已解析 ${resolved}/${targets.length} 条路径（当前模式下 stat 会被自身拦截，故跳过用户态探测）。` });
 		} else if (resolved === 0) {
 			items.push({ level: "warn", title: "内核未解析到任何路径", body: `配置了 ${targets.length} 条路径但内核加载时全部跳过；可能配置变更后未重启或热重载。` });
 		} else {
@@ -1166,31 +1201,30 @@ function computeVerdict(facts) {
 				],
 			};
 		}
-		// Unresolved deny packages: deny mode + at least one package
-		// in conf failed to resolve to a UID. This is the silent
-		// classic ("packages all set, but Holmes still sees stuff")
-		// because PathMask just skips unresolved entries on insmod
-		// and never warns. Worse, isolated processes (like the
-		// holmes_zygote helper) can resolve fine in deny_packages but
-		// run under a different UID at runtime; still, "0 of N
-		// resolved" is a clear typo case worth flagging.
-		const denyMode = (facts.sysfsParams.scope_mode || "") === "deny";
-		if (denyMode && facts.unresolvedDenyPackages && facts.unresolvedDenyPackages.length > 0) {
+		// Unresolved scoped packages: deny/allow mode + at least one package
+		// in conf failed to resolve to a UID. In deny mode that means a target
+		// app is not hidden; in allow mode it means a trusted app is not exempt.
+		const scopeMode = normalizeScope(facts.sysfsParams.scope_mode || "deny");
+		const denyMode = scopeMode === "deny";
+		const allowMode = scopeMode === "allow";
+		const scopedListMode = denyMode || allowMode;
+		if (scopedListMode && facts.unresolvedDenyPackages && facts.unresolvedDenyPackages.length > 0) {
 			const total = (facts.denyPackagesEntries || []).length;
 			const unresolved = facts.unresolvedDenyPackages;
+			const listName = allowMode ? "白名单" : "黑名单";
 			return {
 				level: FACT_WARN,
-				headline: `${unresolved.length}/${total} 个 deny 包名当前无法解析为 UID`,
+				headline: `${unresolved.length}/${total} 个${listName}包名当前无法解析为 UID`,
 				suggestions: [
 					`未解析：${unresolved.join(", ")}`,
 					"包名拼错、应用未安装、或者它是隔离进程（隔离 UID 在 90000-98999 / 99000-99999 范围，PM 查不到）。",
-					"对照「应用黑名单」面板里实际显示的包名；如果是隔离进程，配 hide_isolated 而不是包名。",
+					`对照「应用${allowMode ? "白名单" : "黑名单"}」面板里实际显示的包名；如果是隔离进程，手填直接 UID。`,
 					"修好 conf 后点「保存并热重载」让新的 UID 解析生效。",
 				],
 			};
 		}
 		// Hooks-mounted-but-never-fired warning. If the user
-		// genuinely has zero deny UIDs hitting target paths this is
+		// genuinely has zero listed UIDs hitting target paths this is
 		// false-positive friendly, so we only fire it when the
 		// scope is deny + boot_state was old enough that an
 		// access-loop should have happened by now (>5 min).
@@ -1206,7 +1240,7 @@ function computeVerdict(facts) {
 				headline: "hook 已挂上但从未被任何进程触发",
 				suggestions: [
 					`已经过去 ${facts.bootStateAgeStr || "很久"}，dmesg 里没有任何 'hook fired (first time)' 行。`,
-					"说明 deny 列表里的 UID 实际上从未访问过目标路径，或者它们用了 PathMask 还没覆盖的 syscall。",
+					"说明黑名单里的 UID 实际上从未访问过目标路径，或者它们用了 PathMask 还没覆盖的 syscall。",
 					"如果你期望某个应用被拦截：在 logcat -s pathmask 里搜 hook fired，或者让应用重新启动后重测。",
 				],
 			};
@@ -1283,12 +1317,15 @@ function computeVerdict(facts) {
 	}
 
 	if (facts.bootStateName === "skipped-no-uids") {
+		const allowMode = (facts.bootStateDetail || "").indexOf("allow mode") !== -1;
 		return {
 			level: FACT_WARN,
-			headline: "deny 模式下没有解析到任何 UID",
+			headline: allowMode ? "allow 白名单没有解析到任何 UID" : "deny 模式下没有解析到任何 UID",
 			suggestions: [
-				"deny 模式至少需要一个能解析到 UID 的应用。",
-				"在「应用黑名单」里勾上想隐藏的应用，或在「直接 UID」里手填，然后保存并重启。",
+				allowMode
+					? "allow 模式至少需要一个能解析到 UID 的白名单应用。"
+					: "deny 模式至少需要一个能解析到 UID 的应用。",
+				`在「应用${allowMode ? "白名单" : "黑名单"}」里勾选应用，或在「直接 UID」里手填，然后保存并重启。`,
 			],
 		};
 	}
@@ -1440,7 +1477,7 @@ function buildKeyFacts(facts) {
 		));
 	}
 
-	// Hook fired: shows whether any deny UID has actually triggered
+	// Hook fired: shows whether any listed UID has actually triggered
 	// our hooks since boot. Empty list on a freshly-loaded module is
 	// fine; empty list 5+ minutes after load is suspicious.
 	if (facts.moduleLoaded && facts.dmesgState.available) {
@@ -1457,7 +1494,7 @@ function buildKeyFacts(facts) {
 			lines.push(fmtFactRow(
 				"hook 命中",
 				FACT_INFO,
-				`挂载 ${hooked.length} 个，但 dmesg 中尚未见任何 'fired (first time)' 行（开机不久或 deny UID 未访问目标）`,
+				`挂载 ${hooked.length} 个，但 dmesg 中尚未见任何 'fired (first time)' 行（开机不久或作用 UID 未访问目标）`,
 			));
 		}
 		if (skipped.length > 0) {
@@ -1488,7 +1525,7 @@ function buildKeyFacts(facts) {
 		}
 	}
 
-	// Deny-package -> UID map. We render this whenever any package
+	// Package -> UID map. We render this whenever any package
 	// is listed in conf, even when the module isn't loaded, because
 	// "did this package even resolve" is the question users have
 	// most often. Layout: <pkg> -> uid (or '(未解析)'). Compact view
@@ -1512,7 +1549,7 @@ function buildKeyFacts(facts) {
 		}
 	}
 
-	// Orphan UIDs in sysfs: kernel deny_uids has UIDs that don't
+	// Orphan UIDs in sysfs: kernel deny_uids has scoped UIDs that don't
 	// match any package now in conf and aren't in deny_uids.conf
 	// either. Most often means user removed a package from conf
 	// but didn't hot-reload, so kernel still hides for the old UID.
@@ -1779,10 +1816,12 @@ async function refreshConfig() {
 	$("#enableSyscallHooksInput").checked = parseBoolish(enableSyscallHooksText, true);
 	applySyscallHooksToCheckboxes(syscallHooksText);
 	updateSyscallHooksDisabledState();
-	const scope = (scopeText.trim() || "deny") === "global" ? "global" : "deny";
-	document.querySelector(`input[name="scope"][value="${scope}"]`).checked = true;
+	const scope = normalizeScope(scopeText.trim() || "deny");
+	const scopeInput = document.querySelector(`input[name="scope"][value="${scope}"]`);
+	if (scopeInput) scopeInput.checked = true;
 	const packageLines = linesFromText(pkgText);
-	selectedPackages = new Set(packageLines.length ? packageLines : DEFAULT_DENY_PACKAGES);
+	selectedPackages = new Set(packageLines.length ? packageLines : (scope === "deny" ? DEFAULT_DENY_PACKAGES : []));
+	updateScopeCopy(scope);
 	$("#denyUidsInput").value = linesFromText(uidText).join("\n");
 	$("#waitSecondsInput").value = parseWaitSeconds(waitText);
 	renderApps();
@@ -1952,12 +1991,14 @@ function describeBootState(snapshot, moduleLoaded) {
 				title: "所有隐藏路径在等待结束时仍不存在",
 				body: `service.sh 跳过加载。可调大等待秒数或检查路径是否拼写正确。${detailSuffix}`,
 			};
-		case "skipped-no-uids":
+		case "skipped-no-uids": {
+			const allowMode = (boot.detail || "").indexOf("allow mode") !== -1;
 			return {
 				level: "warn",
-				title: "deny 模式下未解析到任何 UID",
+				title: allowMode ? "allow 白名单未解析到任何 UID" : "deny 模式下未解析到任何 UID",
 				body: `service.sh 跳过加载。检查包名是否拼写正确，或填写直接 UID。${detailSuffix}`,
 			};
+		}
 		case "skipped-empty-targets":
 			return {
 				level: "bad",
@@ -2007,8 +2048,8 @@ async function refreshTargetProbe() {
 	}
 
 	/*
-	 * In global scope, the module's own syscall hooks intercept stat()
-	 * for every UID -- including this WebUI shell. A direct `[ -e ]`
+	 * In global/allow scope, the module's own syscall hooks may intercept stat()
+	 * for this WebUI shell. A direct `[ -e ]`
 	 * probe would falsely report MISS for paths that the kernel actually
 	 * resolved successfully, because that's exactly what global hiding
 	 * does. Skip the stat probe and fall back to the kernel-side
@@ -2021,8 +2062,8 @@ async function refreshTargetProbe() {
 	 * "kernel resolved N/M" so the UI no longer blames the wrong cause.
 	 */
 	const loaded = (lastSnapshot.moduleText || "").trim();
-	const scope = (lastSnapshot.scopeText || "").trim();
-	if (loaded && scope === "global") {
+	const scope = normalizeScope(lastSnapshot.scopeText || "");
+	if (loaded && (scope === "global" || scope === "allow")) {
 		const resolved = Number.parseInt((lastSnapshot.sysResolvedCount || "").trim(), 10);
 		if (Number.isFinite(resolved) && resolved >= 0) {
 			lastSnapshot.targetProbe = paths.map((path) => (
@@ -2081,7 +2122,7 @@ async function validateConfig(options = {}) {
 	const ok = [];
 	const paths = collectPaths();
 	const seenPaths = new Set();
-	const scope = document.querySelector('input[name="scope"]:checked')?.value || "global";
+	const scope = currentScope();
 	const directUids = linesFromText($("#denyUidsInput").value);
 	const packages = [...selectedPackages].sort();
 
@@ -2126,8 +2167,9 @@ async function validateConfig(options = {}) {
 		}
 	}
 
-	if (scope === "deny" && packages.length === 0 && directUids.length === 0) {
-		errors.push("黑名单模式下至少需要选择一个包名或填写一个 UID。");
+	if ((scope === "deny" || scope === "allow") && packages.length === 0 && directUids.length === 0) {
+		const listName = scope === "allow" ? "白名单" : "黑名单";
+		errors.push(`${listName}模式下至少需要选择一个包名或填写一个 UID。`);
 	}
 
 	if (requireModuleFile && ((lastSnapshot.koInfo || "").includes("missing") ||
@@ -2139,7 +2181,7 @@ async function validateConfig(options = {}) {
 	if (lastSnapshot.targetProbeHidden) {
 		const resolved = Number.isFinite(lastSnapshot.targetResolvedCount) ? lastSnapshot.targetResolvedCount : -1;
 		if (resolved >= 0 && resolved < paths.length) {
-			warnings.push(`内核仅解析了 ${resolved}/${paths.length} 条路径（global 模式下 stat 会被自身拦截，跳过用户态校验）。`);
+			warnings.push(`内核仅解析了 ${resolved}/${paths.length} 条路径（当前模式下 stat 会被自身拦截，跳过用户态校验）。`);
 		}
 	} else {
 		const probeLines = linesFromText(lastSnapshot.targetProbe || "");
@@ -2151,7 +2193,7 @@ async function validateConfig(options = {}) {
 		}
 	}
 
-	if (scope === "deny" && packages.length) {
+	if ((scope === "deny" || scope === "allow") && packages.length) {
 		const packageProbe = await safeExec(`
 for p in ${packages.map(shellQuote).join(" ")}; do
 	if [ -f /data/system/packages.list ] && grep -q "^$p " /data/system/packages.list 2>/dev/null; then
@@ -2192,7 +2234,7 @@ true
 
 async function saveConfig() {
 	await validateConfig({ throwOnError: true });
-	const scope = document.querySelector('input[name="scope"]:checked')?.value || "global";
+	const scope = currentScope();
 	await writeLines(files.targets, collectPaths());
 	await writeLines(files.hideDirents, [$("#hideDirentsInput").checked ? "1" : "0"]);
 	await writeLines(files.enableSyscallHooks, [$("#enableSyscallHooksInput").checked ? "1" : "0"]);
@@ -2208,7 +2250,7 @@ async function saveConfig() {
 
 async function reloadModule() {
 	await validateConfig({ throwOnError: true, requireModuleFile: true });
-	const scope = document.querySelector('input[name="scope"]:checked')?.value || "global";
+	const scope = currentScope();
 	await writeLines(files.targets, collectPaths());
 	await writeLines(files.hideDirents, [$("#hideDirentsInput").checked ? "1" : "0"]);
 	await writeLines(files.enableSyscallHooks, [$("#enableSyscallHooksInput").checked ? "1" : "0"]);
@@ -2297,9 +2339,9 @@ echo '--- target existence ---'
 if [ -f ${shellQuote(files.targets)} ]; then
   scope=$(cat ${shellQuote(files.scope)} 2>/dev/null | head -n1 | tr -d ' \\t\\r\\n')
   loaded=$(grep -c '^${MODULE_NAME} ' /proc/modules 2>/dev/null || echo 0)
-  if [ "$scope" = "global" ] && [ "$loaded" -gt 0 ]; then
+  if { [ "$scope" = "global" ] || [ "$scope" = "allow" ]; } && [ "$loaded" -gt 0 ]; then
     resolved=$(cat /sys/module/${MODULE_NAME}/parameters/resolved_count 2>/dev/null || echo ?)
-    echo "(scope=global, kernel resolved $resolved target(s); skipping user-space stat probe to avoid self-hide)"
+    echo "(scope=$scope, kernel resolved $resolved target(s); skipping user-space stat probe to avoid self-hide)"
   else
     # Probe each line: strip optional dir: prefix, translate ??? to
     # shell *, then either glob-expand (and report HIT/EMPTY) or
@@ -2576,8 +2618,10 @@ for (const button of $$(".logTab")) {
 
 for (const radio of document.querySelectorAll('input[name="scope"]')) {
 	radio.addEventListener("change", () => {
+		if (!radio.checked) return;
+		updateScopeCopy(radio.value);
 		updateHealthList();
-		if (radio.value === "deny" && radio.checked && apps.length === 0) {
+		if ((radio.value === "deny" || radio.value === "allow") && apps.length === 0) {
 			loadApps().catch(() => {});
 		}
 	});

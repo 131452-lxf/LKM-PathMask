@@ -235,6 +235,9 @@ init_persistent_config() {
 	chmod 0700 "$PERSIST_DIR" 2>/dev/null || true
 	migrate_legacy_wait_seconds
 
+	HAD_SYSCALL_HOOKS_CONFIG=0
+	[ -f "$SYSCALL_HOOKS_CONFIG" ] && HAD_SYSCALL_HOOKS_CONFIG=1
+
 	# Upgrade-path migrations: if the user is still running the
 	# verbatim default from a previous release (we recognise it by
 	# its exact byte content via sha1sum), refresh that file from
@@ -275,12 +278,16 @@ init_persistent_config() {
 	# bisect localised the problem to a single syscall (faccessat) and the
 	# new syscall_hooks.conf already excludes it, the safer behaviour is
 	# to enable the fallback by default. Migrate only the unmodified
-	# defaults so users who had explicitly set 0 keep their choice.
+	# defaults when upgrading from configs that predate syscall_hooks.conf.
+	# Once syscall_hooks.conf exists, "0" is a deliberate WebUI master-toggle
+	# choice and must not be auto-migrated back to 1 during hot reload.
 	#   "0" / "0\n" hashes from the v2.2.8 - v2.3.1 default file.
-	migrate_known_default \
-		"$ENABLE_SYSCALL_HOOKS_CONFIG" \
-		"$MOD_ENABLE_SYSCALL_HOOKS_CONFIG" \
-		"b6589fc6ab0dc82cf12099d1c2d40ab994e8410c,09d2af8dd22201dd8d48e5dcfcaed281ff9422c7"
+	if [ "$HAD_SYSCALL_HOOKS_CONFIG" = "0" ]; then
+		migrate_known_default \
+			"$ENABLE_SYSCALL_HOOKS_CONFIG" \
+			"$MOD_ENABLE_SYSCALL_HOOKS_CONFIG" \
+			"b6589fc6ab0dc82cf12099d1c2d40ab994e8410c,09d2af8dd22201dd8d48e5dcfcaed281ff9422c7"
+	fi
 }
 
 add_target_path() {
@@ -894,7 +901,7 @@ wait_for_targets() {
 	any_target_exists
 }
 
-wait_for_deny_packages() {
+wait_for_scope_packages() {
 	END="$1"
 
 	write_boot_state "waiting-packages" "" "$END"
@@ -1003,7 +1010,7 @@ case "$WAIT_SECONDS" in
 esac
 
 case "$SCOPE_MODE" in
-	deny|global)
+	deny|allow|global)
 		;;
 	*)
 		log_i "unsupported scope_mode=$SCOPE_MODE, fallback to global"
@@ -1068,11 +1075,16 @@ if ! wait_for_targets "$WAIT_DEADLINE"; then
 	exit 0
 fi
 
-if [ "$SCOPE_MODE" = "deny" ]; then
-	wait_for_deny_packages "$WAIT_DEADLINE"
+if [ "$SCOPE_MODE" = "deny" ] || [ "$SCOPE_MODE" = "allow" ]; then
+	wait_for_scope_packages "$WAIT_DEADLINE"
 	if [ -z "$DENY_UIDS" ]; then
-		log_i "scope_mode=deny but no deny UIDs resolved, skip loading"
-		write_boot_state "skipped-no-uids" "deny mode without resolved UIDs" ""
+		if [ "$SCOPE_MODE" = "allow" ]; then
+			log_i "scope_mode=allow but no allow UIDs resolved, skip loading"
+			write_boot_state "skipped-no-uids" "allow mode without resolved UIDs" ""
+		else
+			log_i "scope_mode=deny but no deny UIDs resolved, skip loading"
+			write_boot_state "skipped-no-uids" "deny mode without resolved UIDs" ""
+		fi
 		exit 0
 	fi
 else

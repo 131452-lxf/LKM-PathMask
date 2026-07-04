@@ -18,21 +18,22 @@ Follow-up ideas:
 - Add a runtime debug log that prints the number of hidden entries removed from
   each `getdents64` buffer.
 
-## Scoped hiding / blacklist
+## Scoped hiding / blacklist / whitelist
 
-Status: implemented for UID blacklist.
+Status: implemented for UID blacklist and whitelist.
 
 Current behavior:
 
 - `scope_mode=global` keeps the old behavior.
 - `scope_mode=deny` hides only from configured UIDs.
+- `scope_mode=allow` hides from everyone except configured UIDs.
 - The KernelSU wrapper resolves package names from `deny_packages.conf` into
-  UIDs before loading the module.
-- The KernelSU WebUI can edit paths, blacklist packages, direct UIDs,
+  UIDs before loading the module; in allow mode, the same list is treated as
+  the allowlist.
+- The KernelSU WebUI can edit paths, scoped packages, direct UIDs,
   `scope_mode`, and `hide_dirents`.
 
 Follow-up ideas:
 
-- Add whitelist mode after blacklist testing is stable.
 - Add process-name matching as a secondary filter.
 - Add runtime config updates without unload/reload.
