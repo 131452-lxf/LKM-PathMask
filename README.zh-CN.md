@@ -239,11 +239,19 @@ PathMask 的持久化配置都放在 `/data/adb/pathmask`。一般建议用 WebU
 
 `/data/adb/pathmask/deny_packages.conf`
 
-作用范围包名列表，一行一个包名。deny 模式下这些包名会被隐藏；allow 模式下这些包名会被豁免。开机脚本会把这些包名解析成 UID，再传给内核模块。包名写错或 App 没安装时，可能解析不到 UID。
+黑名单包名列表，一行一个包名。只在 deny 模式下生效；这些包名会被隐藏。开机脚本会把包名解析成 UID，再传给内核模块。
 
 `/data/adb/pathmask/deny_uids.conf`
 
-直接填写 UID，一行一个数字。deny 模式下这些 UID 会被隐藏；allow 模式下这些 UID 会被豁免。适合包名解析失败、测试 shell UID，或者你已经知道目标 App UID 的情况。
+直接填写黑名单 UID，一行一个数字。只在 deny 模式下生效。
+
+`/data/adb/pathmask/allow_packages.conf`
+
+白名单包名列表，一行一个包名。只在 allow 模式下生效；这些包名会被豁免，其它 App 默认看不到目标路径。
+
+`/data/adb/pathmask/allow_uids.conf`
+
+直接填写白名单 UID，一行一个数字。只在 allow 模式下生效。适合包名解析失败、测试 shell UID，或者你已经知道目标 App UID 的情况。
 
 `/data/adb/pathmask/wait_seconds.conf`
 

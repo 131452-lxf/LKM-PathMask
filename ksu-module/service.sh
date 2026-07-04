@@ -17,6 +17,8 @@ MOD_HIDE_DIRENTS_CONFIG="$MODDIR/hide_dirents.conf"
 MOD_SCOPE_MODE_CONFIG="$MODDIR/scope_mode.conf"
 MOD_DENY_UIDS_CONFIG="$MODDIR/deny_uids.conf"
 MOD_DENY_PACKAGES_CONFIG="$MODDIR/deny_packages.conf"
+MOD_ALLOW_UIDS_CONFIG="$MODDIR/allow_uids.conf"
+MOD_ALLOW_PACKAGES_CONFIG="$MODDIR/allow_packages.conf"
 MOD_WAIT_SECONDS_CONFIG="$MODDIR/wait_seconds.conf"
 MOD_ENABLE_SYSCALL_HOOKS_CONFIG="$MODDIR/enable_syscall_hooks.conf"
 MOD_SYSCALL_HOOKS_CONFIG="$MODDIR/syscall_hooks.conf"
@@ -26,6 +28,8 @@ HIDE_DIRENTS_CONFIG="$PERSIST_DIR/hide_dirents.conf"
 SCOPE_MODE_CONFIG="$PERSIST_DIR/scope_mode.conf"
 DENY_UIDS_CONFIG="$PERSIST_DIR/deny_uids.conf"
 DENY_PACKAGES_CONFIG="$PERSIST_DIR/deny_packages.conf"
+ALLOW_UIDS_CONFIG="$PERSIST_DIR/allow_uids.conf"
+ALLOW_PACKAGES_CONFIG="$PERSIST_DIR/allow_packages.conf"
 WAIT_SECONDS_CONFIG="$PERSIST_DIR/wait_seconds.conf"
 ENABLE_SYSCALL_HOOKS_CONFIG="$PERSIST_DIR/enable_syscall_hooks.conf"
 SYSCALL_HOOKS_CONFIG="$PERSIST_DIR/syscall_hooks.conf"
@@ -207,12 +211,27 @@ migrate_legacy_config() {
 	[ -d "$LEGACY_PERSIST_DIR" ] || return
 
 	if mkdir -p "$PERSIST_DIR" 2>/dev/null; then
-		for NAME in target_path.conf hide_dirents.conf scope_mode.conf deny_uids.conf deny_packages.conf wait_seconds.conf target_wait_seconds.conf package_wait_seconds.conf; do
+		for NAME in target_path.conf hide_dirents.conf scope_mode.conf deny_uids.conf deny_packages.conf allow_uids.conf allow_packages.conf wait_seconds.conf target_wait_seconds.conf package_wait_seconds.conf; do
 			if [ -f "$LEGACY_PERSIST_DIR/$NAME" ]; then
 				cp "$LEGACY_PERSIST_DIR/$NAME" "$PERSIST_DIR/$NAME" 2>/dev/null || true
 			fi
 		done
 		log_i "migrated legacy config from $LEGACY_PERSIST_DIR"
+	fi
+}
+
+migrate_allow_scope_split() {
+	[ -f "$SCOPE_MODE_CONFIG" ] || return
+	CURRENT_SCOPE_MODE="$(head -n 1 "$SCOPE_MODE_CONFIG" 2>/dev/null | tr -d '\r ' || true)"
+	[ "$CURRENT_SCOPE_MODE" = "allow" ] || return
+
+	if [ ! -f "$ALLOW_PACKAGES_CONFIG" ] && [ -f "$DENY_PACKAGES_CONFIG" ]; then
+		cp "$DENY_PACKAGES_CONFIG" "$ALLOW_PACKAGES_CONFIG" 2>/dev/null && \
+			log_i "migrated allow_packages.conf from shared deny_packages.conf"
+	fi
+	if [ ! -f "$ALLOW_UIDS_CONFIG" ] && [ -f "$DENY_UIDS_CONFIG" ]; then
+		cp "$DENY_UIDS_CONFIG" "$ALLOW_UIDS_CONFIG" 2>/dev/null && \
+			log_i "migrated allow_uids.conf from shared deny_uids.conf"
 	fi
 }
 
@@ -226,6 +245,8 @@ init_persistent_config() {
 		SCOPE_MODE_CONFIG="$MOD_SCOPE_MODE_CONFIG"
 		DENY_UIDS_CONFIG="$MOD_DENY_UIDS_CONFIG"
 		DENY_PACKAGES_CONFIG="$MOD_DENY_PACKAGES_CONFIG"
+		ALLOW_UIDS_CONFIG="$MOD_ALLOW_UIDS_CONFIG"
+		ALLOW_PACKAGES_CONFIG="$MOD_ALLOW_PACKAGES_CONFIG"
 		WAIT_SECONDS_CONFIG="$MOD_WAIT_SECONDS_CONFIG"
 		ENABLE_SYSCALL_HOOKS_CONFIG="$MOD_ENABLE_SYSCALL_HOOKS_CONFIG"
 		SYSCALL_HOOKS_CONFIG="$MOD_SYSCALL_HOOKS_CONFIG"
@@ -234,6 +255,7 @@ init_persistent_config() {
 
 	chmod 0700 "$PERSIST_DIR" 2>/dev/null || true
 	migrate_legacy_wait_seconds
+	migrate_allow_scope_split
 
 	HAD_SYSCALL_HOOKS_CONFIG=0
 	[ -f "$SYSCALL_HOOKS_CONFIG" ] && HAD_SYSCALL_HOOKS_CONFIG=1
@@ -269,6 +291,8 @@ init_persistent_config() {
 	seed_config_file "$SCOPE_MODE_CONFIG" "$MOD_SCOPE_MODE_CONFIG" "deny"
 	seed_config_file "$DENY_UIDS_CONFIG" "$MOD_DENY_UIDS_CONFIG" ""
 	seed_config_file "$DENY_PACKAGES_CONFIG" "$MOD_DENY_PACKAGES_CONFIG" ""
+	seed_config_file "$ALLOW_UIDS_CONFIG" "$MOD_ALLOW_UIDS_CONFIG" ""
+	seed_config_file "$ALLOW_PACKAGES_CONFIG" "$MOD_ALLOW_PACKAGES_CONFIG" ""
 	seed_config_file "$WAIT_SECONDS_CONFIG" "$MOD_WAIT_SECONDS_CONFIG" "60"
 	seed_config_file "$ENABLE_SYSCALL_HOOKS_CONFIG" "$MOD_ENABLE_SYSCALL_HOOKS_CONFIG" "1"
 	seed_config_file "$SYSCALL_HOOKS_CONFIG" "$MOD_SYSCALL_HOOKS_CONFIG" "newfstatat,statx,faccessat2,readlinkat,openat,openat2"
@@ -599,8 +623,9 @@ package_to_uid() {
 	package_to_uid_from_data_dir "$1" | head -n 1
 }
 
-read_deny_uid_config() {
-	[ -f "$DENY_UIDS_CONFIG" ] || return
+read_scope_uid_config() {
+	UID_CONFIG="$1"
+	[ -f "$UID_CONFIG" ] || return
 
 	while IFS= read -r CONFIG_LINE || [ -n "$CONFIG_LINE" ]; do
 		CONFIG_LINE="$(printf '%s' "$CONFIG_LINE" | tr -d '\r')"
@@ -618,13 +643,14 @@ read_deny_uid_config() {
 			IFS=","
 		done
 		IFS="$OLD_IFS"
-	done < "$DENY_UIDS_CONFIG"
+	done < "$UID_CONFIG"
 }
 
-read_deny_package_config() {
-	QUIET="$1"
+read_scope_package_config() {
+	PACKAGE_CONFIG="$1"
+	QUIET="$2"
 	UNRESOLVED_PACKAGES=0
-	[ -f "$DENY_PACKAGES_CONFIG" ] || return
+	[ -f "$PACKAGE_CONFIG" ] || return
 
 	while IFS= read -r CONFIG_LINE || [ -n "$CONFIG_LINE" ]; do
 		CONFIG_LINE="$(printf '%s' "$CONFIG_LINE" | tr -d '\r ')"
@@ -641,7 +667,31 @@ read_deny_package_config() {
 			UNRESOLVED_PACKAGES=$((UNRESOLVED_PACKAGES + 1))
 			[ "$QUIET" = "1" ] || log_i "could not resolve package UID: $CONFIG_LINE"
 		fi
-	done < "$DENY_PACKAGES_CONFIG"
+	done < "$PACKAGE_CONFIG"
+}
+
+read_deny_uid_config() {
+	read_scope_uid_config "$DENY_UIDS_CONFIG"
+}
+
+read_deny_package_config() {
+	read_scope_package_config "$DENY_PACKAGES_CONFIG" "$1"
+}
+
+read_active_uid_config() {
+	if [ "$SCOPE_MODE" = "allow" ]; then
+		read_scope_uid_config "$ALLOW_UIDS_CONFIG"
+	else
+		read_scope_uid_config "$DENY_UIDS_CONFIG"
+	fi
+}
+
+read_active_package_config() {
+	if [ "$SCOPE_MODE" = "allow" ]; then
+		read_scope_package_config "$ALLOW_PACKAGES_CONFIG" "$1"
+	else
+		read_scope_package_config "$DENY_PACKAGES_CONFIG" "$1"
+	fi
 }
 
 any_target_exists() {
@@ -908,10 +958,10 @@ wait_for_scope_packages() {
 
 	while :; do
 		DENY_UIDS=""
-		read_deny_uid_config
-		read_deny_package_config 1
+		read_active_uid_config
+		read_active_package_config 1
 		if [ "$UNRESOLVED_PACKAGES" -eq 0 ]; then
-			read_deny_package_config 0
+			read_active_package_config 0
 			return 0
 		fi
 		NOW="$(date +%s 2>/dev/null || echo 0)"
@@ -920,8 +970,8 @@ wait_for_scope_packages() {
 	done
 
 	DENY_UIDS=""
-	read_deny_uid_config
-	read_deny_package_config 0
+	read_active_uid_config
+	read_active_package_config 0
 }
 
 init_persistent_config

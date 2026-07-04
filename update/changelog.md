@@ -1,8 +1,8 @@
-# PathMask 2.3.3
+# PathMask 2.4.0
 
 ## 解决了什么
 
-- **新增白名单作用范围**。`scope_mode=allow` 会默认对所有 App/UID 隐藏目标路径，`deny_packages.conf` / `deny_uids.conf` 中列出的 App/UID 反过来作为豁免白名单；WebUI 现在可以在全局、黑名单、白名单三种作用范围之间切换，并在白名单为空或包名解析失败时给出明确提示。
+- **新增白名单作用范围**。`scope_mode=allow` 会默认对所有 App/UID 隐藏目标路径，白名单独立保存到 `allow_packages.conf` / `allow_uids.conf`，不再复用黑名单配置；WebUI 现在可以在全局、黑名单、白名单三种作用范围之间切换，并在白名单为空或包名解析失败时给出明确提示，应用列表中已勾选包名会自动置顶。
 - **修复 syscall 兜底总开关热重载后被重新勾选的问题**。已经生成 `syscall_hooks.conf` 的安装不再把用户手动保存的 `enable_syscall_hooks.conf=0` 当作旧默认值迁移回 `1`，保存并热重载后配置会保持关闭。
 - **重构诊断报告**。把以前那种"四段 raw stdout 拼起来、用户复制完一脸懵、开发者收到只能再问一轮"的诊断换成结构化版本：
 

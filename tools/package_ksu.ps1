@@ -35,6 +35,8 @@ param(
     [string]$ScopeMode,
     [string]$DenyPackage,
     [string]$DenyUid,
+    [string]$AllowPackage,
+    [string]$AllowUid,
     [int]$WaitSeconds,
     [string]$UpdateJson = ""
 )
@@ -125,6 +127,14 @@ if ($PSBoundParameters.ContainsKey('DenyUid')) {
     $DenyUidList = $DenyUid -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }
     Set-Content -LiteralPath (Join-Path $StageDir "deny_uids.conf") -Value $DenyUidList -Encoding ASCII
 }
+if ($PSBoundParameters.ContainsKey('AllowPackage')) {
+    $AllowPackageList = $AllowPackage -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    Set-Content -LiteralPath (Join-Path $StageDir "allow_packages.conf") -Value $AllowPackageList -Encoding ASCII
+}
+if ($PSBoundParameters.ContainsKey('AllowUid')) {
+    $AllowUidList = $AllowUid -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    Set-Content -LiteralPath (Join-Path $StageDir "allow_uids.conf") -Value $AllowUidList -Encoding ASCII
+}
 if ($PSBoundParameters.ContainsKey('WaitSeconds')) {
     Set-Content -LiteralPath (Join-Path $StageDir "wait_seconds.conf") -Value $WaitSeconds -NoNewline -Encoding ASCII
 }
@@ -177,6 +187,8 @@ foreach ($confName in @(
     "scope_mode.conf",
     "deny_packages.conf",
     "deny_uids.conf",
+    "allow_packages.conf",
+    "allow_uids.conf",
     "wait_seconds.conf"
 )) {
     $confPath = Join-Path $StageDir $confName

@@ -106,8 +106,8 @@ https://raw.githubusercontent.com/Andrea-lyz/LKM-PathMask/main/update/android15-
 ```
 
 That JSON then points back to the matching `android15-6.6_pathmask-ksu.zip`
-asset on the `pathmask-latest` release, so Manager updates do not cross-install
-the wrong KMI package.
+asset on the current version release, so Manager updates do not cross-install
+the wrong KMI package. Version releases are also mirrored to `pathmask-latest`.
 
 ## Local Build
 
@@ -218,14 +218,15 @@ edits these files for you, but they can also be inspected manually:
 - `/data/adb/pathmask/hide_dirents.conf`: directory-list filtering switch. `1`
   hides target entries from parent directory listings; `0` keeps direct access
   checks only.
-- `/data/adb/pathmask/deny_packages.conf`: scoped package list, one package name
-  per line. In `deny` mode these packages are hidden from targets; in `allow`
-  mode they are exempt. The boot service resolves names to UIDs before loading
-  the kernel module.
-- `/data/adb/pathmask/deny_uids.conf`: direct scoped UID list, one UID per line.
-  In `deny` mode these UIDs are hidden from targets; in `allow` mode they are
-  exempt. Use this when package-name resolution is unreliable or when testing
-  shell/app UIDs directly.
+- `/data/adb/pathmask/deny_packages.conf`: blacklist package list, one package
+  name per line. Used only in `deny` mode.
+- `/data/adb/pathmask/deny_uids.conf`: direct blacklist UID list, one UID per
+  line. Used only in `deny` mode.
+- `/data/adb/pathmask/allow_packages.conf`: allowlist package list, one package
+  name per line. Used only in `allow` mode; listed apps are exempt from hiding.
+- `/data/adb/pathmask/allow_uids.conf`: direct allowlist UID list, one UID per
+  line. Used only in `allow` mode. Use direct UIDs when package-name resolution
+  is unreliable or when testing shell/app UIDs directly.
 - `/data/adb/pathmask/wait_seconds.conf`: total budget the boot service spends
   waiting for configured target paths to appear and (in `deny` / `allow` mode)
   for package names to resolve to UIDs. Default 60 seconds. Both phases share the

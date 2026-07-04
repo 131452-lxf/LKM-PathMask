@@ -81,6 +81,8 @@ const files = {
 	scope: `${CONFIGDIR}/scope_mode.conf`,
 	denyPackages: `${CONFIGDIR}/deny_packages.conf`,
 	denyUids: `${CONFIGDIR}/deny_uids.conf`,
+	allowPackages: `${CONFIGDIR}/allow_packages.conf`,
+	allowUids: `${CONFIGDIR}/allow_uids.conf`,
 	waitSeconds: `${CONFIGDIR}/wait_seconds.conf`,
 	enableSyscallHooks: `${CONFIGDIR}/enable_syscall_hooks.conf`,
 	syscallHooks: `${CONFIGDIR}/syscall_hooks.conf`,
@@ -92,7 +94,10 @@ const files = {
 };
 
 let apps = [];
-let selectedPackages = new Set();
+let packageSelections = { deny: new Set(), allow: new Set() };
+let selectedPackages = packageSelections.deny;
+let uidTexts = { deny: "", allow: "" };
+let activeListMode = "deny";
 let busy = false;
 let lastSnapshot = {};
 let logPages = { status: [], config: [], kernel: [], script: [] };
@@ -295,6 +300,33 @@ function updateScopeCopy(scope) {
 			: "全局模式：所有应用都会看不到隐藏路径，应用列表不会参与判断。");
 }
 
+function listModeForScope(scope) {
+	return normalizeScope(scope) === "allow" ? "allow" : "deny";
+}
+
+function syncActiveUidText() {
+	const input = $("#denyUidsInput");
+	if (input) uidTexts[activeListMode] = input.value;
+}
+
+function setActiveScopeList(scope, options = {}) {
+	if (options.syncCurrent !== false) syncActiveUidText();
+	activeListMode = listModeForScope(scope);
+	if (!packageSelections[activeListMode]) packageSelections[activeListMode] = new Set();
+	selectedPackages = packageSelections[activeListMode];
+	const input = $("#denyUidsInput");
+	if (input) input.value = linesFromText(uidTexts[activeListMode] || "").join("\n");
+}
+
+function activeDirectUids() {
+	syncActiveUidText();
+	return linesFromText(uidTexts[listModeForScope(currentScope())] || "");
+}
+
+function sortedPackageList(mode) {
+	return [...(packageSelections[mode] || new Set())].sort();
+}
+
 // Mirror service.sh's accept-list for boolean *.conf files. The kernel
 // param itself is bool 0/1, but we accept the same human-friendly values
 // here so a manually-edited conf with "true"/"yes" still loads cleanly.
@@ -485,10 +517,17 @@ function renderApps() {
 	const query = $("#searchInput").value.trim().toLowerCase();
 	appList.textContent = "";
 
-	const filtered = apps.filter((app) => !query || app.pkg.toLowerCase().includes(query));
+	const filtered = apps
+		.filter((app) => !query || app.pkg.toLowerCase().includes(query))
+		.sort((a, b) => {
+			const selectedA = selectedPackages.has(a.pkg);
+			const selectedB = selectedPackages.has(b.pkg);
+			if (selectedA !== selectedB) return selectedA ? -1 : 1;
+			return a.pkg.localeCompare(b.pkg);
+		});
 	for (const app of filtered) {
 		const row = document.createElement("label");
-		row.className = "appRow";
+		row.className = selectedPackages.has(app.pkg) ? "appRow selected" : "appRow";
 
 		const checkbox = document.createElement("input");
 		checkbox.type = "checkbox";
@@ -496,6 +535,7 @@ function renderApps() {
 		checkbox.addEventListener("change", () => {
 			if (checkbox.checked) selectedPackages.add(app.pkg);
 			else selectedPackages.delete(app.pkg);
+			renderApps();
 			updateHealthList();
 		});
 
@@ -555,7 +595,7 @@ function updateHealthList() {
 	const scope = currentScope();
 	const targets = collectPaths();
 	const selected = [...selectedPackages];
-	const directUids = linesFromText($("#denyUidsInput").value);
+	const directUids = activeDirectUids();
 	const sysUids = linesFromText((snapshot.sysDenyUids || "").replace(/,/g, "\n"));
 	const loadFailCount = Number.parseInt(firstLine(snapshot.loadFailCountText), 10) || 0;
 	const loadFailReason = firstLine(snapshot.loadFailReasonText);
@@ -1794,8 +1834,10 @@ async function refreshConfig() {
 	const targetText = await readFile(files.targets);
 	const hideText = await readFile(files.hideDirents);
 	const scopeText = await readFile(files.scope);
-	const pkgText = await readFile(files.denyPackages);
-	const uidText = await readFile(files.denyUids);
+	const denyPkgText = await readFile(files.denyPackages);
+	const allowPkgText = await readFile(files.allowPackages);
+	const denyUidText = await readFile(files.denyUids);
+	const allowUidText = await readFile(files.allowUids);
 	const waitText = await readFile(files.waitSeconds);
 	const enableSyscallHooksText = await readFile(files.enableSyscallHooks);
 	const syscallHooksText = await readFile(files.syscallHooks);
@@ -1819,10 +1861,20 @@ async function refreshConfig() {
 	const scope = normalizeScope(scopeText.trim() || "deny");
 	const scopeInput = document.querySelector(`input[name="scope"][value="${scope}"]`);
 	if (scopeInput) scopeInput.checked = true;
-	const packageLines = linesFromText(pkgText);
-	selectedPackages = new Set(packageLines.length ? packageLines : (scope === "deny" ? DEFAULT_DENY_PACKAGES : []));
+	const denyPackageLines = linesFromText(denyPkgText);
+	const allowPackageLines = linesFromText(allowPkgText);
+	packageSelections = {
+		deny: new Set(denyPackageLines.length ? denyPackageLines : DEFAULT_DENY_PACKAGES),
+		allow: new Set(allowPackageLines),
+	};
+	uidTexts = {
+		deny: linesFromText(denyUidText).join("\n"),
+		allow: linesFromText(allowUidText).join("\n"),
+	};
+	setActiveScopeList(scope, { syncCurrent: false });
+	const pkgText = scope === "allow" ? allowPkgText : denyPkgText;
+	const uidText = scope === "allow" ? allowUidText : denyUidText;
 	updateScopeCopy(scope);
-	$("#denyUidsInput").value = linesFromText(uidText).join("\n");
 	$("#waitSecondsInput").value = parseWaitSeconds(waitText);
 	renderApps();
 
@@ -1833,6 +1885,10 @@ async function refreshConfig() {
 		scopeText,
 		pkgText,
 		uidText,
+		denyPkgText,
+		allowPkgText,
+		denyUidText,
+		allowUidText,
 		waitText,
 		enableSyscallHooksText,
 		syscallHooksText,
@@ -2123,7 +2179,7 @@ async function validateConfig(options = {}) {
 	const paths = collectPaths();
 	const seenPaths = new Set();
 	const scope = currentScope();
-	const directUids = linesFromText($("#denyUidsInput").value);
+	const directUids = activeDirectUids();
 	const packages = [...selectedPackages].sort();
 
 	if (!paths.length) {
@@ -2240,8 +2296,11 @@ async function saveConfig() {
 	await writeLines(files.enableSyscallHooks, [$("#enableSyscallHooksInput").checked ? "1" : "0"]);
 	await writeLines(files.syscallHooks, [collectSyscallHooks().join(",")]);
 	await writeLines(files.scope, [scope]);
-	await writeLines(files.denyPackages, [...selectedPackages].sort());
-	await writeLines(files.denyUids, linesFromText($("#denyUidsInput").value));
+	syncActiveUidText();
+	await writeLines(files.denyPackages, sortedPackageList("deny"));
+	await writeLines(files.allowPackages, sortedPackageList("allow"));
+	await writeLines(files.denyUids, linesFromText(uidTexts.deny || ""));
+	await writeLines(files.allowUids, linesFromText(uidTexts.allow || ""));
 	await writeLines(files.waitSeconds, [String(currentWaitSeconds())]);
 	await refreshConfig();
 	statusText.textContent = "已保存，重启后生效";
@@ -2256,8 +2315,11 @@ async function reloadModule() {
 	await writeLines(files.enableSyscallHooks, [$("#enableSyscallHooksInput").checked ? "1" : "0"]);
 	await writeLines(files.syscallHooks, [collectSyscallHooks().join(",")]);
 	await writeLines(files.scope, [scope]);
-	await writeLines(files.denyPackages, [...selectedPackages].sort());
-	await writeLines(files.denyUids, linesFromText($("#denyUidsInput").value));
+	syncActiveUidText();
+	await writeLines(files.denyPackages, sortedPackageList("deny"));
+	await writeLines(files.allowPackages, sortedPackageList("allow"));
+	await writeLines(files.denyUids, linesFromText(uidTexts.deny || ""));
+	await writeLines(files.allowUids, linesFromText(uidTexts.allow || ""));
 	await writeLines(files.waitSeconds, [String(currentWaitSeconds())]);
 	statusText.textContent = "正在热重载...";
 	const output = await execShell(
@@ -2285,7 +2347,9 @@ async function restoreDefaults() {
 	await writeLines(files.syscallHooks, [DEFAULT_SYSCALL_HOOKS.join(",")]);
 	await writeLines(files.scope, ["deny"]);
 	await writeLines(files.denyPackages, DEFAULT_DENY_PACKAGES);
+	await writeLines(files.allowPackages, []);
 	await writeLines(files.denyUids, []);
+	await writeLines(files.allowUids, []);
 	await writeLines(files.waitSeconds, [String(DEFAULT_WAIT_SECONDS)]);
 	await refreshConfig();
 	showToast("已恢复默认配置，重启后生效");
@@ -2619,7 +2683,9 @@ for (const button of $$(".logTab")) {
 for (const radio of document.querySelectorAll('input[name="scope"]')) {
 	radio.addEventListener("change", () => {
 		if (!radio.checked) return;
+		setActiveScopeList(radio.value);
 		updateScopeCopy(radio.value);
+		renderApps();
 		updateHealthList();
 		if ((radio.value === "deny" || radio.value === "allow") && apps.length === 0) {
 			loadApps().catch(() => {});
@@ -2627,7 +2693,10 @@ for (const radio of document.querySelectorAll('input[name="scope"]')) {
 	});
 }
 
-$("#denyUidsInput").addEventListener("input", updateHealthList);
+$("#denyUidsInput").addEventListener("input", () => {
+	syncActiveUidText();
+	updateHealthList();
+});
 $("#waitSecondsInput").addEventListener("input", updateHealthList);
 
 try {

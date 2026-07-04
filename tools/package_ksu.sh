@@ -25,8 +25,10 @@
 #                    Or "all" / "none". Empty falls back to the
 #                    template default (faccessat omitted).
 #   SCOPE_MODE      "global", "deny", or "allow"
-#   DENY_PACKAGES   comma-separated package names
-#   DENY_UIDS       comma-separated UIDs
+#   DENY_PACKAGES   comma-separated blacklist package names
+#   DENY_UIDS       comma-separated blacklist UIDs
+#   ALLOW_PACKAGES  comma-separated allowlist package names
+#   ALLOW_UIDS      comma-separated allowlist UIDs
 #   WAIT_SECONDS    integer seconds
 #   UPDATE_JSON_URL absolute https URL appended to module.prop
 set -eu
@@ -138,6 +140,12 @@ fi
 if is_set DENY_UIDS; then
 	printf '%s' "$DENY_UIDS" | tr ',' '\n' > "$STAGE_DIR/deny_uids.conf"
 fi
+if is_set ALLOW_PACKAGES; then
+	printf '%s' "$ALLOW_PACKAGES" | tr ',' '\n' > "$STAGE_DIR/allow_packages.conf"
+fi
+if is_set ALLOW_UIDS; then
+	printf '%s' "$ALLOW_UIDS" | tr ',' '\n' > "$STAGE_DIR/allow_uids.conf"
+fi
 if is_set WAIT_SECONDS; then
 	printf '%s' "$WAIT_SECONDS" > "$STAGE_DIR/wait_seconds.conf"
 fi
@@ -165,6 +173,8 @@ echo "Syscall hooks subset:     $STAGE_DIR/syscall_hooks.conf"
 echo "Scope mode file:          $STAGE_DIR/scope_mode.conf"
 echo "Deny packages file:       $STAGE_DIR/deny_packages.conf"
 echo "Deny UIDs file:           $STAGE_DIR/deny_uids.conf"
+echo "Allow packages file:      $STAGE_DIR/allow_packages.conf"
+echo "Allow UIDs file:          $STAGE_DIR/allow_uids.conf"
 echo "Wait seconds file:        $STAGE_DIR/wait_seconds.conf"
 if [ -n "$UPDATE_JSON_URL" ]; then
 	echo "Update JSON: $UPDATE_JSON_URL"

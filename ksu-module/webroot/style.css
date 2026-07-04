@@ -373,6 +373,10 @@ button:active {
 	border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
 }
 
+.appRow.selected {
+	background: color-mix(in srgb, #26a269 10%, Canvas);
+}
+
 .appRow:last-child {
 	border-bottom: 0;
 }
