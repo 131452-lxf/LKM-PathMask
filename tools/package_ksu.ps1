@@ -37,6 +37,7 @@ param(
     [string]$DenyUid,
     [string]$AllowPackage,
     [string]$AllowUid,
+    [string]$AllowSystemUid,
     [int]$WaitSeconds,
     [string]$UpdateJson = ""
 )
@@ -135,6 +136,10 @@ if ($PSBoundParameters.ContainsKey('AllowUid')) {
     $AllowUidList = $AllowUid -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }
     Set-Content -LiteralPath (Join-Path $StageDir "allow_uids.conf") -Value $AllowUidList -Encoding ASCII
 }
+if ($PSBoundParameters.ContainsKey('AllowSystemUid')) {
+    $AllowSystemUidList = $AllowSystemUid -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    Set-Content -LiteralPath (Join-Path $StageDir "allow_system_uids.conf") -Value $AllowSystemUidList -Encoding ASCII
+}
 if ($PSBoundParameters.ContainsKey('WaitSeconds')) {
     Set-Content -LiteralPath (Join-Path $StageDir "wait_seconds.conf") -Value $WaitSeconds -NoNewline -Encoding ASCII
 }
@@ -189,6 +194,7 @@ foreach ($confName in @(
     "deny_uids.conf",
     "allow_packages.conf",
     "allow_uids.conf",
+    "allow_system_uids.conf",
     "wait_seconds.conf"
 )) {
     $confPath = Join-Path $StageDir $confName

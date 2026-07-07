@@ -1,3 +1,9 @@
+# PathMask 2.4.1
+
+- **白名单模式新增系统 UID 放行预设**。WebUI 增加 `UID 0`、`UID 1000`、`UID 2000` 三个可选项，默认勾选；勾选表示 root/helper、system_server、ADB/shell 这类系统访问不会被隐藏，取消勾选则按白名单语义屏蔽。
+- **白名单配置拆分更完整**。系统 UID 预设单独保存到 `allow_system_uids.conf`，不会混进手填 UID；保存、热重载、恢复默认和诊断报告都会同步处理。
+- **WebUI 标题显示版本号**。页面标题更新为 `PathMask v2.4.1`，方便确认当前刷入版本。
+
 # PathMask 2.4.0
 
 ## 解决了什么

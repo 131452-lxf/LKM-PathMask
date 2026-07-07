@@ -253,6 +253,10 @@ PathMask 的持久化配置都放在 `/data/adb/pathmask`。一般建议用 WebU
 
 直接填写白名单 UID，一行一个数字。只在 allow 模式下生效。适合包名解析失败、测试 shell UID，或者你已经知道目标 App UID 的情况。
 
+`/data/adb/pathmask/allow_system_uids.conf`
+
+白名单模式下的系统 UID 放行预设，一行一个数字。默认是 `0`、`1000`、`2000`；删掉某一行后，root/helper、Android system 服务或 ADB/shell 也会按白名单规则被隐藏。
+
 `/data/adb/pathmask/wait_seconds.conf`
 
 开机时等待隐藏路径出现、以及 deny / allow 模式下等待包名解析为 UID 的总秒数预算。默认 60。两个等待阶段共用同一个截止时间，所以最坏情况下只会延迟这么多，而不是这一项的两倍。路径或包名出现得慢的设备可以调大；也可以在 WebUI 的「开机等待秒数」里直接改。

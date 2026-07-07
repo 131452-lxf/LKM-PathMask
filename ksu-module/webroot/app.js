@@ -70,6 +70,8 @@ const DEFAULT_SYSCALL_HOOKS = ALL_SYSCALL_HOOKS.filter(
 	(name) => name !== "faccessat",
 );
 const SYSCALL_HOOK_SET = new Set(ALL_SYSCALL_HOOKS);
+const DEFAULT_ALLOW_SYSTEM_UIDS = ["0", "1000", "2000"];
+const ALLOW_SYSTEM_UID_SET = new Set(DEFAULT_ALLOW_SYSTEM_UIDS);
 
 const DEFAULT_WAIT_SECONDS = 60;
 const BOOT_POLL_INTERVAL_MS = 5000;
@@ -83,6 +85,7 @@ const files = {
 	denyUids: `${CONFIGDIR}/deny_uids.conf`,
 	allowPackages: `${CONFIGDIR}/allow_packages.conf`,
 	allowUids: `${CONFIGDIR}/allow_uids.conf`,
+	allowSystemUids: `${CONFIGDIR}/allow_system_uids.conf`,
 	waitSeconds: `${CONFIGDIR}/wait_seconds.conf`,
 	enableSyscallHooks: `${CONFIGDIR}/enable_syscall_hooks.conf`,
 	syscallHooks: `${CONFIGDIR}/syscall_hooks.conf`,
@@ -246,6 +249,14 @@ async function readFile(path) {
 	return execShell(`[ -f ${shellQuote(path)} ] && cat ${shellQuote(path)} || true`);
 }
 
+async function readFileOrDefault(path, defaultLines = []) {
+	const quoted = shellQuote(path);
+	const fallback = defaultLines.length
+		? `printf '%s\n' ${defaultLines.map(shellQuote).join(" ")}`
+		: "true";
+	return execShell(`[ -f ${quoted} ] && cat ${quoted} || ${fallback}`);
+}
+
 async function writeLines(path, lines) {
 	const clean = lines.map((line) => line.trim()).filter(Boolean);
 	const body = clean.length
@@ -298,6 +309,7 @@ function updateScopeCopy(scope) {
 		: normal === "deny"
 			? "黑名单模式：勾选的应用会看不到隐藏路径。"
 			: "全局模式：所有应用都会看不到隐藏路径，应用列表不会参与判断。");
+	updateAllowSystemUidsState(normal);
 }
 
 function listModeForScope(scope) {
@@ -404,6 +416,41 @@ function updateSyscallHooksDisabledState() {
 		cb.disabled = off;
 	}
 	details.classList.toggle("disabled", off);
+}
+
+function parseAllowSystemUidsText(text) {
+	const enabled = new Set();
+	for (const token of (text || "").split(/[\s,]+/)) {
+		const uid = token.trim();
+		if (!uid || uid.startsWith("#")) continue;
+		if (ALLOW_SYSTEM_UID_SET.has(uid)) enabled.add(uid);
+	}
+	return enabled;
+}
+
+function applyAllowSystemUidsToCheckboxes(text) {
+	const enabled = parseAllowSystemUidsText(text);
+	for (const cb of document.querySelectorAll('#allowSystemUidsDetails input[data-allow-system-uid]')) {
+		cb.checked = enabled.has(cb.dataset.allowSystemUid);
+	}
+}
+
+function collectAllowSystemUids() {
+	const result = [];
+	for (const cb of document.querySelectorAll('#allowSystemUidsDetails input[data-allow-system-uid]')) {
+		if (cb.checked) result.push(cb.dataset.allowSystemUid);
+	}
+	return result;
+}
+
+function updateAllowSystemUidsState(scope = currentScope()) {
+	const details = $("#allowSystemUidsDetails");
+	if (!details) return;
+	const disabled = normalizeScope(scope) !== "allow";
+	for (const cb of details.querySelectorAll('input[data-allow-system-uid]')) {
+		cb.disabled = disabled;
+	}
+	details.classList.toggle("disabled", disabled);
 }
 
 function setText(selector, value) {
@@ -577,7 +624,8 @@ function updateSummary(snapshot) {
 	const scope = normalizeScope(snapshot.scopeText || "deny");
 	const targetCount = linesFromText(snapshot.targetText || "").length || DEFAULT_TARGET_PATHS.length;
 	const sysUidCount = countCsv(snapshot.sysDenyUids || "");
-	const configUidCount = linesFromText(snapshot.uidText || "").length;
+	const configUidCount = linesFromText(snapshot.uidText || "").length +
+		(scope === "allow" ? parseAllowSystemUidsText(snapshot.allowSystemUidText || "").size : 0);
 
 	setText("#moduleState", loaded ? "已加载" : legacyLoaded ? "旧模块已加载" : "未加载");
 	setText("#scopeState", scopeLabel(scope));
@@ -596,6 +644,7 @@ function updateHealthList() {
 	const targets = collectPaths();
 	const selected = [...selectedPackages];
 	const directUids = activeDirectUids();
+	const allowSystemUids = scope === "allow" ? collectAllowSystemUids() : [];
 	const sysUids = linesFromText((snapshot.sysDenyUids || "").replace(/,/g, "\n"));
 	const loadFailCount = Number.parseInt(firstLine(snapshot.loadFailCountText), 10) || 0;
 	const loadFailReason = firstLine(snapshot.loadFailReasonText);
@@ -619,12 +668,13 @@ function updateHealthList() {
 		items.push({ level: "ok", title: "模块文件存在", body: `${files.ko}` });
 	}
 
-	if ((scope === "deny" || scope === "allow") && selected.length === 0 && directUids.length === 0 && sysUids.length === 0) {
+	if ((scope === "deny" || scope === "allow") && selected.length === 0 && directUids.length === 0 && allowSystemUids.length === 0 && sysUids.length === 0) {
 		const listName = scope === "allow" ? "白名单" : "黑名单";
 		items.push({ level: "bad", title: `${listName}为空`, body: `${scope} 模式下没有包名或 UID，service.sh 会跳过加载。` });
 	} else if (scope === "deny" || scope === "allow") {
 		const listName = scope === "allow" ? "白名单" : "黑名单";
-		items.push({ level: "ok", title: `${listName}模式有目标`, body: `包名 ${selected.length} 个，直接 UID ${directUids.length} 个。` });
+		const systemPart = scope === "allow" ? `，系统 UID ${allowSystemUids.length} 个` : "";
+		items.push({ level: "ok", title: `${listName}模式有目标`, body: `包名 ${selected.length} 个，直接 UID ${directUids.length} 个${systemPart}。` });
 	}
 
 	if (targets.length === 0) {
@@ -1085,7 +1135,32 @@ true
 		.split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !s.startsWith("#")).join(",");
 	const confEnableSyscallHooks = firstLine(snapshot.enableSyscallHooksText);
 	const confScopeMode = (snapshot.scopeText || "").trim();
-	const confDenyUidsCsv = linesFromText(snapshot.uidText || "").join(",");
+	const confDirectUids = linesFromText(snapshot.uidText || "");
+	const confAllowSystemUids = normalizeScope(confScopeMode) === "allow"
+		? [...parseAllowSystemUidsText(snapshot.allowSystemUidText || "")]
+		: [];
+	const confScopeUids = [...new Set([...confAllowSystemUids, ...confDirectUids])];
+
+	// Resolve configured packages before stale detection so sysfs deny_uids can
+	// be compared against the full expected UID set, not just direct UID files.
+	const denyPackagesEntries = [];
+	const unresolvedDenyPackages = [];
+	const resolvedDenyUids = new Set();
+	if (denyResolveRes && denyResolveRes.ok) {
+		for (const raw of (denyResolveRes.stdout || "").split(/\r?\n/)) {
+			const line = raw.replace(/\r$/, "");
+			if (!line) continue;
+			const tab = line.indexOf("\t");
+			if (tab < 0) continue;
+			const pkg = line.slice(0, tab).trim();
+			const uid = line.slice(tab + 1).trim();
+			if (!pkg) continue;
+			denyPackagesEntries.push({ pkg, uid: uid || null });
+			if (uid) resolvedDenyUids.add(uid);
+			else unresolvedDenyPackages.push(pkg);
+		}
+	}
+	const confDenyUidsCsv = [...new Set([...confScopeUids, ...resolvedDenyUids])].join(",");
 	const confTargets = linesFromText(snapshot.targetText || "");
 	const sysResolvedCount = Number.parseInt(sysfsParams.resolved_count || "-1", 10);
 	const sysScopeMode = sysfsParams.scope_mode || "";
@@ -1113,33 +1188,10 @@ true
 	const anyStale = stale.scope || stale.enableSyscallHooks ||
 		stale.syscallHooks || stale.denyUids;
 
-	// Parse the deny-package resolution into typed entries plus a
-	// resolved set we can compare to sysfs deny_uids. Three failure
-	// modes worth surfacing:
-	//   1. Some packages didn't resolve at all (typo in conf, app
-	//      uninstalled, or an isolated process that hides from PM).
-	//   2. Sysfs has UIDs that no current package resolves to (orphan
-	//      from a previously-installed package; stale insmod state).
-	//   3. Sysfs is missing UIDs that conf packages now resolve to
-	//      (user added a package and didn't hot-reload -> covered by
-	//      stale.denyUids already, no separate signal needed).
-	const denyPackagesEntries = [];
-	const unresolvedDenyPackages = [];
-	const resolvedDenyUids = new Set();
-	if (denyResolveRes && denyResolveRes.ok) {
-		for (const raw of (denyResolveRes.stdout || "").split(/\r?\n/)) {
-			const line = raw.replace(/\r$/, "");
-			if (!line) continue;
-			const tab = line.indexOf("\t");
-			if (tab < 0) continue;
-			const pkg = line.slice(0, tab).trim();
-			const uid = line.slice(tab + 1).trim();
-			if (!pkg) continue;
-			denyPackagesEntries.push({ pkg, uid: uid || null });
-			if (uid) resolvedDenyUids.add(uid);
-			else unresolvedDenyPackages.push(pkg);
-		}
-	}
+	// Package resolution was parsed above for stale detection as well as the
+	// unresolved/orphan checks below. Three failure modes are worth surfacing:
+	// unresolved package names, stale sysfs UIDs, and package UID changes after
+	// editing config without hot reload.
 	// Orphan UIDs: sysfs has a UID that no current package resolves
 	// to. Only meaningful when the module is loaded and we have at
 	// least one resolved package (otherwise we'd false-positive when
@@ -1153,7 +1205,7 @@ true
 	// But there's a third source of UIDs in sysfs: deny_uids.conf
 	// (manually-listed UIDs separate from package names). Don't flag
 	// those as orphans -- they're legitimate.
-	const directDenyUids = new Set(linesFromText(snapshot.uidText || ""));
+	const directDenyUids = new Set(confScopeUids);
 	const trueOrphans = orphanSysDenyUids.filter((u) => !directDenyUids.has(u));
 
 	return {
@@ -1193,6 +1245,7 @@ true
 		resolvedDenyUids: [...resolvedDenyUids],
 		orphanDenyUids: trueOrphans,
 		directDenyUids: [...directDenyUids],
+		allowSystemUids: confAllowSystemUids,
 	};
 }
 
@@ -1838,6 +1891,7 @@ async function refreshConfig() {
 	const allowPkgText = await readFile(files.allowPackages);
 	const denyUidText = await readFile(files.denyUids);
 	const allowUidText = await readFile(files.allowUids);
+	const allowSystemUidText = await readFileOrDefault(files.allowSystemUids, DEFAULT_ALLOW_SYSTEM_UIDS);
 	const waitText = await readFile(files.waitSeconds);
 	const enableSyscallHooksText = await readFile(files.enableSyscallHooks);
 	const syscallHooksText = await readFile(files.syscallHooks);
@@ -1861,6 +1915,8 @@ async function refreshConfig() {
 	const scope = normalizeScope(scopeText.trim() || "deny");
 	const scopeInput = document.querySelector(`input[name="scope"][value="${scope}"]`);
 	if (scopeInput) scopeInput.checked = true;
+	applyAllowSystemUidsToCheckboxes(allowSystemUidText);
+	updateAllowSystemUidsState(scope);
 	const denyPackageLines = linesFromText(denyPkgText);
 	const allowPackageLines = linesFromText(allowPkgText);
 	packageSelections = {
@@ -1889,6 +1945,7 @@ async function refreshConfig() {
 		allowPkgText,
 		denyUidText,
 		allowUidText,
+		allowSystemUidText,
 		waitText,
 		enableSyscallHooksText,
 		syscallHooksText,
@@ -2180,6 +2237,7 @@ async function validateConfig(options = {}) {
 	const seenPaths = new Set();
 	const scope = currentScope();
 	const directUids = activeDirectUids();
+	const allowSystemUids = scope === "allow" ? collectAllowSystemUids() : [];
 	const packages = [...selectedPackages].sort();
 
 	if (!paths.length) {
@@ -2223,9 +2281,9 @@ async function validateConfig(options = {}) {
 		}
 	}
 
-	if ((scope === "deny" || scope === "allow") && packages.length === 0 && directUids.length === 0) {
+	if ((scope === "deny" || scope === "allow") && packages.length === 0 && directUids.length === 0 && allowSystemUids.length === 0) {
 		const listName = scope === "allow" ? "白名单" : "黑名单";
-		errors.push(`${listName}模式下至少需要选择一个包名或填写一个 UID。`);
+		errors.push(`${listName}模式下至少需要选择一个包名、填写一个 UID，或勾选系统 UID 放行。`);
 	}
 
 	if (requireModuleFile && ((lastSnapshot.koInfo || "").includes("missing") ||
@@ -2262,7 +2320,7 @@ true
 `);
 		const packageProbeLines = linesFromText(packageProbe);
 		const missingPackages = packageProbeLines.filter((line) => line.startsWith("MISS "));
-		if (missingPackages.length === packages.length && directUids.length === 0) {
+		if (missingPackages.length === packages.length && directUids.length === 0 && allowSystemUids.length === 0) {
 			warnings.push("当前选择的包名可能都无法解析 UID，开机服务可能会跳过加载。");
 		} else if (missingPackages.length) {
 			warnings.push(`${missingPackages.length} 个包名当前未在 packages.list 中找到。`);
@@ -2301,6 +2359,7 @@ async function saveConfig() {
 	await writeLines(files.allowPackages, sortedPackageList("allow"));
 	await writeLines(files.denyUids, linesFromText(uidTexts.deny || ""));
 	await writeLines(files.allowUids, linesFromText(uidTexts.allow || ""));
+	await writeLines(files.allowSystemUids, collectAllowSystemUids());
 	await writeLines(files.waitSeconds, [String(currentWaitSeconds())]);
 	await refreshConfig();
 	statusText.textContent = "已保存，重启后生效";
@@ -2320,6 +2379,7 @@ async function reloadModule() {
 	await writeLines(files.allowPackages, sortedPackageList("allow"));
 	await writeLines(files.denyUids, linesFromText(uidTexts.deny || ""));
 	await writeLines(files.allowUids, linesFromText(uidTexts.allow || ""));
+	await writeLines(files.allowSystemUids, collectAllowSystemUids());
 	await writeLines(files.waitSeconds, [String(currentWaitSeconds())]);
 	statusText.textContent = "正在热重载...";
 	const output = await execShell(
@@ -2350,6 +2410,7 @@ async function restoreDefaults() {
 	await writeLines(files.allowPackages, []);
 	await writeLines(files.denyUids, []);
 	await writeLines(files.allowUids, []);
+	await writeLines(files.allowSystemUids, DEFAULT_ALLOW_SYSTEM_UIDS);
 	await writeLines(files.waitSeconds, [String(DEFAULT_WAIT_SECONDS)]);
 	await refreshConfig();
 	showToast("已恢复默认配置，重启后生效");
@@ -2653,6 +2714,9 @@ $("#refreshBtn").addEventListener("click", () => runAction("正在刷新...", re
 // toggle is flipped, so it visibly tracks the dependency without waiting
 // for the next refresh.
 $("#enableSyscallHooksInput").addEventListener("change", updateSyscallHooksDisabledState);
+for (const cb of document.querySelectorAll('#allowSystemUidsDetails input[data-allow-system-uid]')) {
+	cb.addEventListener("change", updateHealthList);
+}
 $("#searchInput").addEventListener("input", renderApps);
 $("#saveBtn").addEventListener("click", () => runAction("正在保存...", saveConfig).catch(() => {}));
 $("#pauseBtn").addEventListener("click", () => runAction("正在暂停隐藏...", pauseHiding).catch(() => {}));

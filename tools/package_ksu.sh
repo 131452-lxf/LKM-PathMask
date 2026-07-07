@@ -29,6 +29,7 @@
 #   DENY_UIDS       comma-separated blacklist UIDs
 #   ALLOW_PACKAGES  comma-separated allowlist package names
 #   ALLOW_UIDS      comma-separated allowlist UIDs
+#   ALLOW_SYSTEM_UIDS comma-separated allow-mode system UID presets
 #   WAIT_SECONDS    integer seconds
 #   UPDATE_JSON_URL absolute https URL appended to module.prop
 set -eu
@@ -146,6 +147,9 @@ fi
 if is_set ALLOW_UIDS; then
 	printf '%s' "$ALLOW_UIDS" | tr ',' '\n' > "$STAGE_DIR/allow_uids.conf"
 fi
+if is_set ALLOW_SYSTEM_UIDS; then
+	printf '%s' "$ALLOW_SYSTEM_UIDS" | tr ',' '\n' > "$STAGE_DIR/allow_system_uids.conf"
+fi
 if is_set WAIT_SECONDS; then
 	printf '%s' "$WAIT_SECONDS" > "$STAGE_DIR/wait_seconds.conf"
 fi
@@ -175,6 +179,7 @@ echo "Deny packages file:       $STAGE_DIR/deny_packages.conf"
 echo "Deny UIDs file:           $STAGE_DIR/deny_uids.conf"
 echo "Allow packages file:      $STAGE_DIR/allow_packages.conf"
 echo "Allow UIDs file:          $STAGE_DIR/allow_uids.conf"
+echo "Allow system UIDs file:   $STAGE_DIR/allow_system_uids.conf"
 echo "Wait seconds file:        $STAGE_DIR/wait_seconds.conf"
 if [ -n "$UPDATE_JSON_URL" ]; then
 	echo "Update JSON: $UPDATE_JSON_URL"

@@ -3,13 +3,13 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>PathMask</title>
+	<title>PathMask v2.4.1</title>
 	<link rel="stylesheet" href="./style.css">
 </head>
 <body>
 	<header class="topbar">
 		<div>
-			<h1>PathMask</h1>
+			<h1>PathMask v2.4.1</h1>
 			<p id="statusText">正在读取状态...</p>
 		</div>
 		<div class="topActions">
@@ -144,6 +144,17 @@
 					<h2>直接填写 UID</h2>
 				</div>
 				<textarea id="denyUidsInput" rows="4" spellcheck="false" placeholder="每行一个 UID"></textarea>
+				<details id="allowSystemUidsDetails" class="subPanel">
+					<summary>白名单系统 UID 放行</summary>
+					<small class="hint">
+						仅 allow 模式生效。勾选表示这些系统/调试 UID 不被隐藏；取消勾选后它们也会按白名单规则被屏蔽。
+					</small>
+					<div class="syscallList">
+						<label class="syscallRow"><input type="checkbox" data-allow-system-uid="0"><span>UID 0<small>root / su / 文件管理器 helper</small></span></label>
+						<label class="syscallRow"><input type="checkbox" data-allow-system-uid="1000"><span>UID 1000<small>system / system_server</small></span></label>
+						<label class="syscallRow"><input type="checkbox" data-allow-system-uid="2000"><span>UID 2000<small>shell / ADB / scrcpy</small></span></label>
+					</div>
+				</details>
 			</section>
 
 			<section class="panel">

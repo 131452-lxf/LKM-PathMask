@@ -19,6 +19,7 @@ MOD_DENY_UIDS_CONFIG="$MODDIR/deny_uids.conf"
 MOD_DENY_PACKAGES_CONFIG="$MODDIR/deny_packages.conf"
 MOD_ALLOW_UIDS_CONFIG="$MODDIR/allow_uids.conf"
 MOD_ALLOW_PACKAGES_CONFIG="$MODDIR/allow_packages.conf"
+MOD_ALLOW_SYSTEM_UIDS_CONFIG="$MODDIR/allow_system_uids.conf"
 MOD_WAIT_SECONDS_CONFIG="$MODDIR/wait_seconds.conf"
 MOD_ENABLE_SYSCALL_HOOKS_CONFIG="$MODDIR/enable_syscall_hooks.conf"
 MOD_SYSCALL_HOOKS_CONFIG="$MODDIR/syscall_hooks.conf"
@@ -30,6 +31,7 @@ DENY_UIDS_CONFIG="$PERSIST_DIR/deny_uids.conf"
 DENY_PACKAGES_CONFIG="$PERSIST_DIR/deny_packages.conf"
 ALLOW_UIDS_CONFIG="$PERSIST_DIR/allow_uids.conf"
 ALLOW_PACKAGES_CONFIG="$PERSIST_DIR/allow_packages.conf"
+ALLOW_SYSTEM_UIDS_CONFIG="$PERSIST_DIR/allow_system_uids.conf"
 WAIT_SECONDS_CONFIG="$PERSIST_DIR/wait_seconds.conf"
 ENABLE_SYSCALL_HOOKS_CONFIG="$PERSIST_DIR/enable_syscall_hooks.conf"
 SYSCALL_HOOKS_CONFIG="$PERSIST_DIR/syscall_hooks.conf"
@@ -211,7 +213,7 @@ migrate_legacy_config() {
 	[ -d "$LEGACY_PERSIST_DIR" ] || return
 
 	if mkdir -p "$PERSIST_DIR" 2>/dev/null; then
-		for NAME in target_path.conf hide_dirents.conf scope_mode.conf deny_uids.conf deny_packages.conf allow_uids.conf allow_packages.conf wait_seconds.conf target_wait_seconds.conf package_wait_seconds.conf; do
+		for NAME in target_path.conf hide_dirents.conf scope_mode.conf deny_uids.conf deny_packages.conf allow_uids.conf allow_packages.conf allow_system_uids.conf wait_seconds.conf target_wait_seconds.conf package_wait_seconds.conf; do
 			if [ -f "$LEGACY_PERSIST_DIR/$NAME" ]; then
 				cp "$LEGACY_PERSIST_DIR/$NAME" "$PERSIST_DIR/$NAME" 2>/dev/null || true
 			fi
@@ -247,6 +249,7 @@ init_persistent_config() {
 		DENY_PACKAGES_CONFIG="$MOD_DENY_PACKAGES_CONFIG"
 		ALLOW_UIDS_CONFIG="$MOD_ALLOW_UIDS_CONFIG"
 		ALLOW_PACKAGES_CONFIG="$MOD_ALLOW_PACKAGES_CONFIG"
+		ALLOW_SYSTEM_UIDS_CONFIG="$MOD_ALLOW_SYSTEM_UIDS_CONFIG"
 		WAIT_SECONDS_CONFIG="$MOD_WAIT_SECONDS_CONFIG"
 		ENABLE_SYSCALL_HOOKS_CONFIG="$MOD_ENABLE_SYSCALL_HOOKS_CONFIG"
 		SYSCALL_HOOKS_CONFIG="$MOD_SYSCALL_HOOKS_CONFIG"
@@ -293,6 +296,9 @@ init_persistent_config() {
 	seed_config_file "$DENY_PACKAGES_CONFIG" "$MOD_DENY_PACKAGES_CONFIG" ""
 	seed_config_file "$ALLOW_UIDS_CONFIG" "$MOD_ALLOW_UIDS_CONFIG" ""
 	seed_config_file "$ALLOW_PACKAGES_CONFIG" "$MOD_ALLOW_PACKAGES_CONFIG" ""
+	seed_config_file "$ALLOW_SYSTEM_UIDS_CONFIG" "$MOD_ALLOW_SYSTEM_UIDS_CONFIG" "0
+1000
+2000"
 	seed_config_file "$WAIT_SECONDS_CONFIG" "$MOD_WAIT_SECONDS_CONFIG" "60"
 	seed_config_file "$ENABLE_SYSCALL_HOOKS_CONFIG" "$MOD_ENABLE_SYSCALL_HOOKS_CONFIG" "1"
 	seed_config_file "$SYSCALL_HOOKS_CONFIG" "$MOD_SYSCALL_HOOKS_CONFIG" "newfstatat,statx,faccessat2,readlinkat,openat,openat2"
@@ -680,6 +686,7 @@ read_deny_package_config() {
 
 read_active_uid_config() {
 	if [ "$SCOPE_MODE" = "allow" ]; then
+		read_scope_uid_config "$ALLOW_SYSTEM_UIDS_CONFIG"
 		read_scope_uid_config "$ALLOW_UIDS_CONFIG"
 	else
 		read_scope_uid_config "$DENY_UIDS_CONFIG"

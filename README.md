@@ -227,6 +227,9 @@ edits these files for you, but they can also be inspected manually:
 - `/data/adb/pathmask/allow_uids.conf`: direct allowlist UID list, one UID per
   line. Used only in `allow` mode. Use direct UIDs when package-name resolution
   is unreliable or when testing shell/app UIDs directly.
+- `/data/adb/pathmask/allow_system_uids.conf`: allow-mode system UID presets,
+  one UID per line. Defaults to `0`, `1000`, and `2000`; remove a UID to hide
+  from root helpers, Android system services, or ADB/shell respectively.
 - `/data/adb/pathmask/wait_seconds.conf`: total budget the boot service spends
   waiting for configured target paths to appear and (in `deny` / `allow` mode)
   for package names to resolve to UIDs. Default 60 seconds. Both phases share the
