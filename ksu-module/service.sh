@@ -6,6 +6,8 @@ LEGACY_MODULE_ID=nohello-demo
 LOG_TAG=pathmask
 KO_NAME=pathmask.ko
 KO_PATH="$MODDIR/$KO_NAME"
+SCENE_WATCH_SCRIPT="$MODDIR/scene-debugfs-watch.sh"
+SCENE_PACKAGE="com.omarea.vtools"
 PERSIST_DIR="/data/adb/pathmask"
 LEGACY_PERSIST_DIR="/data/adb/nohello"
 LOAD_FAIL_COUNT_PATH="$PERSIST_DIR/load_fail_count"
@@ -23,6 +25,7 @@ MOD_ALLOW_SYSTEM_UIDS_CONFIG="$MODDIR/allow_system_uids.conf"
 MOD_WAIT_SECONDS_CONFIG="$MODDIR/wait_seconds.conf"
 MOD_ENABLE_SYSCALL_HOOKS_CONFIG="$MODDIR/enable_syscall_hooks.conf"
 MOD_SYSCALL_HOOKS_CONFIG="$MODDIR/syscall_hooks.conf"
+MOD_AUTO_SCENE_DEBUGFS_CONFIG="$MODDIR/auto_scene_debugfs.conf"
 
 CONFIG_PATH="$PERSIST_DIR/target_path.conf"
 HIDE_DIRENTS_CONFIG="$PERSIST_DIR/hide_dirents.conf"
@@ -35,6 +38,10 @@ ALLOW_SYSTEM_UIDS_CONFIG="$PERSIST_DIR/allow_system_uids.conf"
 WAIT_SECONDS_CONFIG="$PERSIST_DIR/wait_seconds.conf"
 ENABLE_SYSCALL_HOOKS_CONFIG="$PERSIST_DIR/enable_syscall_hooks.conf"
 SYSCALL_HOOKS_CONFIG="$PERSIST_DIR/syscall_hooks.conf"
+AUTO_SCENE_DEBUGFS_CONFIG="$PERSIST_DIR/auto_scene_debugfs.conf"
+SCENE_DEBUGFS_PATHS_PATH="$PERSIST_DIR/scene_debugfs_paths"
+SCENE_DEBUGFS_STATE_PATH="$PERSIST_DIR/scene_debugfs_state"
+SCENE_WATCH_STOP_PATH="$PERSIST_DIR/scene_debugfs_watch.stop"
 LEGACY_TARGET_WAIT_SECONDS_CONFIG="$PERSIST_DIR/target_wait_seconds.conf"
 LEGACY_PACKAGE_WAIT_SECONDS_CONFIG="$PERSIST_DIR/package_wait_seconds.conf"
 BOOT_STATE_PATH="$PERSIST_DIR/boot_state"
@@ -46,6 +53,11 @@ DENY_UIDS=""
 WAIT_SECONDS=60
 ENABLE_SYSCALL_HOOKS=0
 SYSCALL_HOOKS=""
+AUTO_SCENE_DEBUGFS=0
+SCENE_DEBUGFS_PATHS=""
+SCENE_DEBUGFS_COUNT=0
+SCENE_DEBUGFS_STATUS=disabled
+SCENE_PACKAGE_STATUS=unknown
 UNRESOLVED_PACKAGES=0
 
 read_load_failure_count() {
@@ -116,6 +128,51 @@ write_boot_state() {
 		[ -n "$DEADLINE" ] && printf 'deadline=%s\n' "$DEADLINE"
 		[ -n "$DETAIL" ] && printf 'detail=%s\n' "$DETAIL"
 	} > "$BOOT_STATE_PATH" 2>/dev/null || true
+}
+
+write_scene_debugfs_state() {
+	STATUS="$1"
+	APPLIED_ENABLED="$2"
+	DETAIL="$3"
+
+	[ -d "$PERSIST_DIR" ] || mkdir -p "$PERSIST_DIR" 2>/dev/null || return 0
+	if [ -n "$SCENE_DEBUGFS_PATHS" ]; then
+		printf '%s\n' "$SCENE_DEBUGFS_PATHS" > "$SCENE_DEBUGFS_PATHS_PATH" 2>/dev/null || true
+	else
+		: > "$SCENE_DEBUGFS_PATHS_PATH" 2>/dev/null || true
+	fi
+	{
+		printf 'enabled=%s\n' "$AUTO_SCENE_DEBUGFS"
+		printf 'applied_enabled=%s\n' "$APPLIED_ENABLED"
+		printf 'status=%s\n' "$STATUS"
+		printf 'package_status=%s\n' "$SCENE_PACKAGE_STATUS"
+		printf 'count=%s\n' "$SCENE_DEBUGFS_COUNT"
+		printf 'updated=%s\n' "$(date +%s 2>/dev/null || echo 0)"
+		[ -n "$DETAIL" ] && printf 'detail=%s\n' "$DETAIL"
+	} > "$SCENE_DEBUGFS_STATE_PATH" 2>/dev/null || true
+}
+
+detect_scene_package_status() {
+	SCENE_PACKAGE_STATUS=unknown
+	if [ -r /data/system/packages.list ]; then
+		if grep -q "^$SCENE_PACKAGE " /data/system/packages.list 2>/dev/null; then
+			SCENE_PACKAGE_STATUS=installed
+		else
+			SCENE_PACKAGE_STATUS=absent
+		fi
+		return
+	fi
+
+	# packages.list should normally be available by the time KernelSU runs
+	# service scripts. If it is not, only accept a positive Package Manager
+	# result; a failure remains "unknown" so early-boot PM readiness cannot
+	# make us incorrectly skip an installed Scene.
+	if command -v pm >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+		SCENE_PACKAGE_PATH="$(timeout 3 pm path "$SCENE_PACKAGE" 2>/dev/null | head -n 1 || true)"
+		case "$SCENE_PACKAGE_PATH" in
+			package:*) SCENE_PACKAGE_STATUS=installed ;;
+		esac
+	fi
 }
 
 clear_boot_state() {
@@ -213,7 +270,7 @@ migrate_legacy_config() {
 	[ -d "$LEGACY_PERSIST_DIR" ] || return
 
 	if mkdir -p "$PERSIST_DIR" 2>/dev/null; then
-		for NAME in target_path.conf hide_dirents.conf scope_mode.conf deny_uids.conf deny_packages.conf allow_uids.conf allow_packages.conf allow_system_uids.conf wait_seconds.conf target_wait_seconds.conf package_wait_seconds.conf; do
+		for NAME in target_path.conf hide_dirents.conf scope_mode.conf deny_uids.conf deny_packages.conf allow_uids.conf allow_packages.conf allow_system_uids.conf wait_seconds.conf target_wait_seconds.conf package_wait_seconds.conf auto_scene_debugfs.conf; do
 			if [ -f "$LEGACY_PERSIST_DIR/$NAME" ]; then
 				cp "$LEGACY_PERSIST_DIR/$NAME" "$PERSIST_DIR/$NAME" 2>/dev/null || true
 			fi
@@ -253,6 +310,7 @@ init_persistent_config() {
 		WAIT_SECONDS_CONFIG="$MOD_WAIT_SECONDS_CONFIG"
 		ENABLE_SYSCALL_HOOKS_CONFIG="$MOD_ENABLE_SYSCALL_HOOKS_CONFIG"
 		SYSCALL_HOOKS_CONFIG="$MOD_SYSCALL_HOOKS_CONFIG"
+		AUTO_SCENE_DEBUGFS_CONFIG="$MOD_AUTO_SCENE_DEBUGFS_CONFIG"
 		return
 	fi
 
@@ -302,6 +360,7 @@ init_persistent_config() {
 	seed_config_file "$WAIT_SECONDS_CONFIG" "$MOD_WAIT_SECONDS_CONFIG" "60"
 	seed_config_file "$ENABLE_SYSCALL_HOOKS_CONFIG" "$MOD_ENABLE_SYSCALL_HOOKS_CONFIG" "1"
 	seed_config_file "$SYSCALL_HOOKS_CONFIG" "$MOD_SYSCALL_HOOKS_CONFIG" "newfstatat,statx,faccessat2,readlinkat,openat,openat2"
+	seed_config_file "$AUTO_SCENE_DEBUGFS_CONFIG" "$MOD_AUTO_SCENE_DEBUGFS_CONFIG" "0"
 
 	# Existing installs from v2.2.8 - v2.3.1 shipped enable_syscall_hooks=0
 	# as a defensive default (Holmes 04 mitigation pre-bisect). Now that the
@@ -343,6 +402,105 @@ add_target_path() {
 	else
 		TARGET_PATHS="$TARGET_PATHS,$CANDIDATE_PATH"
 	fi
+}
+
+# Discover the complete debugfs mount path used by recent Scene versions.
+# Names below /dev are random on every boot, so identify the mount by both
+# filesystem type and SELinux context. Only paths visible in our own mount
+# namespace are usable: module init resolves targets in the insmod caller's
+# namespace through kern_path().
+discover_scene_debugfs() {
+	SCENE_DEBUGFS_PATHS=""
+	SCENE_DEBUGFS_COUNT=0
+	SCENE_DEBUGFS_STATUS=not-found
+	SCENE_DEBUGFS_SEEN=","
+
+	[ "$AUTO_SCENE_DEBUGFS" = "1" ] || {
+		SCENE_DEBUGFS_STATUS=disabled
+		return 1
+	}
+	[ "$SCENE_PACKAGE_STATUS" != "absent" ] || {
+		SCENE_DEBUGFS_STATUS=no-package
+		return 1
+	}
+	[ -r /proc/self/mountinfo ] || {
+		SCENE_DEBUGFS_STATUS=error
+		return 1
+	}
+
+	while IFS= read -r MOUNT_LINE || [ -n "$MOUNT_LINE" ]; do
+		case "$MOUNT_LINE" in
+			*' - '*) ;;
+			*) continue ;;
+		esac
+
+		MOUNT_LEFT="${MOUNT_LINE%% - *}"
+		MOUNT_RIGHT="${MOUNT_LINE#* - }"
+		set -- $MOUNT_LEFT
+		[ "$#" -ge 5 ] || continue
+		MOUNT_POINT="$5"
+		set -- $MOUNT_RIGHT
+		[ "$#" -ge 1 ] || continue
+		[ "$1" = "debugfs" ] || continue
+
+		case "$MOUNT_POINT" in
+			/dev/*) ;;
+			*) continue ;;
+		esac
+		case "$MOUNT_POINT" in
+			*'..'*|*','*|*' '*|*\\*) continue ;;
+		esac
+		[ "${#MOUNT_POINT}" -lt 256 ] || continue
+		[ -e "$MOUNT_POINT" ] || continue
+
+		MOUNT_CONTEXT="$(stat -c '%C' "$MOUNT_POINT" 2>/dev/null | head -n 1 | tr -d '\r')"
+		[ "$MOUNT_CONTEXT" = "u:object_r:debugfs:s0" ] || continue
+		case "$SCENE_DEBUGFS_SEEN" in
+			*,"$MOUNT_POINT",*) continue ;;
+		esac
+		SCENE_DEBUGFS_SEEN="$SCENE_DEBUGFS_SEEN$MOUNT_POINT,"
+
+		add_target_path "$MOUNT_POINT"
+		log_i "auto-discovered Scene debugfs mount: $MOUNT_POINT"
+		if [ -z "$SCENE_DEBUGFS_PATHS" ]; then
+			SCENE_DEBUGFS_PATHS="$MOUNT_POINT"
+		else
+			SCENE_DEBUGFS_PATHS="$SCENE_DEBUGFS_PATHS
+$MOUNT_POINT"
+		fi
+		SCENE_DEBUGFS_COUNT=$((SCENE_DEBUGFS_COUNT + 1))
+		if [ "$SCENE_DEBUGFS_COUNT" -ge 8 ]; then
+			log_i "Scene debugfs discovery reached safety limit (8 mounts)"
+			break
+		fi
+	done < /proc/self/mountinfo
+
+	if [ "$SCENE_DEBUGFS_COUNT" -gt 0 ]; then
+		SCENE_DEBUGFS_STATUS=found
+		return 0
+	fi
+	return 1
+}
+
+start_scene_debugfs_watcher() {
+	APPLIED_ENABLED="$1"
+
+	[ "$AUTO_SCENE_DEBUGFS" = "1" ] || return
+	[ "$SCENE_PACKAGE_STATUS" != "absent" ] || return
+	[ "$SCENE_DEBUGFS_COUNT" -eq 0 ] || return
+	[ -f "$SCENE_WATCH_SCRIPT" ] || {
+		log_i "Scene debugfs late watcher is missing: $SCENE_WATCH_SCRIPT"
+		return
+	}
+	[ "${PATHMASK_SCENE_WATCH_RELOAD:-0}" != "1" ] || return
+
+	write_scene_debugfs_state "late-watching" "$APPLIED_ENABLED" "initial scan found no mount; detached background watcher starting"
+	if command -v setsid >/dev/null 2>&1; then
+		PATHMASK_SCENE_APPLIED="$APPLIED_ENABLED" setsid sh "$SCENE_WATCH_SCRIPT" </dev/null >/dev/null 2>&1 &
+	else
+		PATHMASK_SCENE_APPLIED="$APPLIED_ENABLED" sh "$SCENE_WATCH_SCRIPT" </dev/null >/dev/null 2>&1 &
+	fi
+	log_i "started Scene debugfs late watcher pid=$!"
 }
 
 # Configured raw lines (one per line of target_path.conf, unexpanded).
@@ -506,6 +664,7 @@ rebuild_target_paths() {
 "
 	done
 	IFS="$OLD_IFS"
+	discover_scene_debugfs || true
 }
 
 add_deny_uid() {
@@ -935,6 +1094,9 @@ wait_for_targets() {
 	END="$1"
 
 	write_boot_state "waiting-targets" "$TARGET_RAW_LINES" "$END"
+	if [ "$AUTO_SCENE_DEBUGFS" = "1" ]; then
+		write_scene_debugfs_state "waiting" "0" "waiting for /dev debugfs mount"
+	fi
 
 	while :; do
 		# Re-expand every iteration so a Scene boot that mounts the
@@ -942,7 +1104,25 @@ wait_for_targets() {
 		# soon as it appears, without having to wait for the literal
 		# /dev/scene fallback to also resolve.
 		rebuild_target_paths
-		if all_literal_targets_exist; then
+		STATIC_TARGETS_READY=0
+		ANY_TARGET_READY=0
+		all_literal_targets_exist && STATIC_TARGETS_READY=1
+		any_target_exists && ANY_TARGET_READY=1
+		# Scene auto-discovery is additive. When another required target is
+		# already usable, do not hold the foreground service open waiting for
+		# Scene's late boot mount; load now and let the detached watcher add it.
+		# If Scene is the only possible target, ANY_TARGET_READY stays zero and
+		# the existing shared deadline still protects the auto-only setup.
+		if [ "$STATIC_TARGETS_READY" = "1" ] && [ "$ANY_TARGET_READY" = "1" ]; then
+			if [ "$AUTO_SCENE_DEBUGFS" = "1" ]; then
+				if [ "$SCENE_DEBUGFS_COUNT" -gt 0 ]; then
+					write_scene_debugfs_state "found" "0" "discovered $SCENE_DEBUGFS_COUNT matching mount(s)"
+				elif [ "$SCENE_PACKAGE_STATUS" = "absent" ]; then
+					write_scene_debugfs_state "no-package" "0" "$SCENE_PACKAGE is not installed; discovery skipped"
+				else
+					write_scene_debugfs_state "not-found" "0" "initial scan found no mount; loading other targets without waiting"
+				fi
+			fi
 			return 0
 		fi
 		NOW="$(date +%s 2>/dev/null || echo 0)"
@@ -953,6 +1133,14 @@ wait_for_targets() {
 	# Final expansion before deciding what to load.
 	rebuild_target_paths
 	log_missing_targets
+	if [ "$AUTO_SCENE_DEBUGFS" = "1" ]; then
+		if [ "$SCENE_DEBUGFS_COUNT" -gt 0 ]; then
+			write_scene_debugfs_state "found" "0" "discovered $SCENE_DEBUGFS_COUNT matching mount(s)"
+		else
+			write_scene_debugfs_state "$SCENE_DEBUGFS_STATUS" "0" "no matching /dev debugfs mount before timeout"
+			log_i "Scene debugfs auto-discovery found no matching mount before timeout"
+		fi
+	fi
 	# The kernel is happy to load with a partial target set; only bail
 	# if literally nothing exists at all.
 	any_target_exists
@@ -982,6 +1170,18 @@ wait_for_scope_packages() {
 }
 
 init_persistent_config
+
+# Pause writes a stop sentinel before unloading so the background watcher
+# cannot race it and restore the module. A normal boot or explicit WebUI hot
+# reload starts a fresh service run and clears the sentinel. An internal late-
+# watcher reload must respect it and abort.
+if [ "${PATHMASK_SCENE_WATCH_RELOAD:-0}" = "1" ] && [ -e "$SCENE_WATCH_STOP_PATH" ]; then
+	log_i "Scene debugfs watcher reload cancelled by pause sentinel"
+	exit 0
+fi
+if [ "${PATHMASK_SCENE_WATCH_RELOAD:-0}" != "1" ]; then
+	rm -f "$SCENE_WATCH_STOP_PATH" 2>/dev/null || true
+fi
 write_boot_state "init" "" ""
 
 if [ -n "${PATHMASK_LOAD_FAIL_LIMIT:-}" ]; then
@@ -1002,6 +1202,25 @@ fi
 if should_skip_after_load_failures; then
 	write_boot_state "skipped-fail-guard" "consecutive insmod failures" ""
 	exit 0
+fi
+
+if [ -f "$AUTO_SCENE_DEBUGFS_CONFIG" ]; then
+	AUTO_SCENE_DEBUGFS="$(head -n 1 "$AUTO_SCENE_DEBUGFS_CONFIG" | tr -d '\r ')"
+fi
+case "$AUTO_SCENE_DEBUGFS" in
+	1|true|True|yes|Yes|on|On) AUTO_SCENE_DEBUGFS=1 ;;
+	*) AUTO_SCENE_DEBUGFS=0 ;;
+esac
+if [ "$AUTO_SCENE_DEBUGFS" = "1" ]; then
+	detect_scene_package_status
+	if [ "$SCENE_PACKAGE_STATUS" = "absent" ]; then
+		SCENE_DEBUGFS_STATUS=no-package
+		write_scene_debugfs_state "no-package" "0" "$SCENE_PACKAGE is not installed; discovery skipped"
+		log_i "Scene debugfs auto-discovery skipped: $SCENE_PACKAGE is not installed"
+	fi
+else
+	SCENE_DEBUGFS_STATUS=disabled
+	write_scene_debugfs_state "disabled" "0" ""
 fi
 
 if [ -f "$CONFIG_PATH" ]; then
@@ -1109,7 +1328,7 @@ elif [ -z "$SYSCALL_HOOKS" ]; then
 	SYSCALL_HOOKS="all"
 fi
 
-if [ -z "$TARGET_RAW_LINES" ]; then
+if [ -z "$TARGET_RAW_LINES" ] && [ "$AUTO_SCENE_DEBUGFS" = "0" ]; then
 	log_e "empty target path list"
 	write_boot_state "skipped-empty-targets" "no path configured" ""
 	exit 1
@@ -1122,13 +1341,23 @@ if [ ! -f "$KO_PATH" ]; then
 	exit 1
 fi
 
-sleep 10
+# A normal boot keeps the conservative 10-second settle delay. WebUI and the
+# detached Scene late watcher run after Android is already up, so they override
+# this to zero instead of paying the same boot-only delay on every reload.
+INITIAL_DELAY_SECONDS="${PATHMASK_INITIAL_DELAY_SECONDS:-10}"
+case "$INITIAL_DELAY_SECONDS" in
+	''|*[!0-9]*) INITIAL_DELAY_SECONDS=10 ;;
+esac
+if [ "$INITIAL_DELAY_SECONDS" -gt 0 ]; then
+	sleep "$INITIAL_DELAY_SECONDS"
+fi
 
 WAIT_DEADLINE=$(( $(date +%s 2>/dev/null || echo 0) + WAIT_SECONDS ))
 
 if ! wait_for_targets "$WAIT_DEADLINE"; then
 	log_i "no configured targets exist, skip loading"
 	write_boot_state "skipped-targets-missing" "$TARGET_PATHS" ""
+	start_scene_debugfs_watcher "0"
 	exit 0
 fi
 
@@ -1162,10 +1391,31 @@ if grep -q '^nohello ' /proc/modules 2>/dev/null; then
 	exit 0
 fi
 
+# UID resolution can consume the remainder of the shared wait deadline. Scan
+# one final time immediately before insmod to close the window where Scene
+# creates (or replaces) its randomized debugfs mount between target waiting
+# and module loading.
+rebuild_target_paths
+if ! any_target_exists; then
+	log_i "no targets exist after final pre-insmod scan, skip loading"
+	write_boot_state "skipped-targets-missing" "$TARGET_PATHS" ""
+	start_scene_debugfs_watcher "0"
+	exit 0
+fi
+if [ "$AUTO_SCENE_DEBUGFS" = "1" ] && [ "$SCENE_DEBUGFS_COUNT" -gt 0 ]; then
+	write_scene_debugfs_state "found" "0" "discovered $SCENE_DEBUGFS_COUNT matching mount(s) before insmod"
+fi
+
 if insmod "$KO_PATH" target_paths="$TARGET_PATHS" hide_dirents="$HIDE_DIRENTS" scope_mode="$SCOPE_MODE" deny_uids="$DENY_UIDS" enable_syscall_hooks="$ENABLE_SYSCALL_HOOKS" syscall_hooks="$SYSCALL_HOOKS"; then
 	reset_load_failure_guard
 	log_i "loaded $KO_PATH target_paths=$TARGET_PATHS hide_dirents=$HIDE_DIRENTS scope_mode=$SCOPE_MODE deny_uids=$DENY_UIDS enable_syscall_hooks=$ENABLE_SYSCALL_HOOKS syscall_hooks=$SYSCALL_HOOKS"
 	write_boot_state "loaded" "$TARGET_PATHS" ""
+	if [ "$AUTO_SCENE_DEBUGFS" = "1" ]; then
+		write_scene_debugfs_state "$SCENE_DEBUGFS_STATUS" "1" "discovered $SCENE_DEBUGFS_COUNT matching mount(s)"
+		start_scene_debugfs_watcher "1"
+	else
+		write_scene_debugfs_state "disabled" "0" ""
+	fi
 else
 	log_e "failed to load $KO_PATH"
 	record_load_failure "insmod failed: $KO_PATH"

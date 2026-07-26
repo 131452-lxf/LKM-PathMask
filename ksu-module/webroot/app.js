@@ -74,8 +74,10 @@ const DEFAULT_ALLOW_SYSTEM_UIDS = ["0", "1000", "2000"];
 const ALLOW_SYSTEM_UID_SET = new Set(DEFAULT_ALLOW_SYSTEM_UIDS);
 
 const DEFAULT_WAIT_SECONDS = 60;
+const DEFAULT_AUTO_SCENE_DEBUGFS = false;
 const BOOT_POLL_INTERVAL_MS = 5000;
 const BOOT_WAITING_STATES = new Set(["init", "waiting-targets", "waiting-packages"]);
+const SCENE_BACKGROUND_STATES = new Set(["late-watching", "late-found-pending", "late-reload-retry"]);
 
 const files = {
 	targets: `${CONFIGDIR}/target_path.conf`,
@@ -89,6 +91,10 @@ const files = {
 	waitSeconds: `${CONFIGDIR}/wait_seconds.conf`,
 	enableSyscallHooks: `${CONFIGDIR}/enable_syscall_hooks.conf`,
 	syscallHooks: `${CONFIGDIR}/syscall_hooks.conf`,
+	autoSceneDebugfs: `${CONFIGDIR}/auto_scene_debugfs.conf`,
+	sceneDebugfsPaths: `${CONFIGDIR}/scene_debugfs_paths`,
+	sceneDebugfsState: `${CONFIGDIR}/scene_debugfs_state`,
+	sceneDebugfsWatchStop: `${CONFIGDIR}/scene_debugfs_watch.stop`,
 	bootState: `${CONFIGDIR}/boot_state`,
 	failCount: `${CONFIGDIR}/load_fail_count`,
 	failReason: `${CONFIGDIR}/load_fail_reason`,
@@ -622,7 +628,12 @@ function updateSummary(snapshot) {
 	const loaded = snapshot.moduleText?.trim();
 	const legacyLoaded = snapshot.legacyModuleText?.trim();
 	const scope = normalizeScope(snapshot.scopeText || "deny");
-	const targetCount = linesFromText(snapshot.targetText || "").length || DEFAULT_TARGET_PATHS.length;
+	const configuredTargetCount = linesFromText(snapshot.targetText || "").length || DEFAULT_TARGET_PATHS.length;
+	const resolvedTargetCount = Number.parseInt((snapshot.sysResolvedCount || "").trim(), 10);
+	const runtimeAutoCount = linesFromText(snapshot.sceneDebugfsPathsText || "").length;
+	const targetCount = loaded && Number.isFinite(resolvedTargetCount)
+		? resolvedTargetCount
+		: configuredTargetCount + runtimeAutoCount;
 	const sysUidCount = countCsv(snapshot.sysDenyUids || "");
 	const configUidCount = linesFromText(snapshot.uidText || "").length +
 		(scope === "allow" ? parseAllowSystemUidsText(snapshot.allowSystemUidText || "").size : 0);
@@ -633,6 +644,48 @@ function updateSummary(snapshot) {
 	setText("#targetCount", String(targetCount));
 	setText("#uidCount", String(sysUidCount || configUidCount));
 	statusText.textContent = loaded ? "模块已加载" : "模块未加载";
+}
+
+function updateAutoSceneDebugfsStatus(snapshot = lastSnapshot) {
+	const node = $("#autoSceneDebugfsStatus");
+	if (!node) return;
+	const configured = parseBoolish(snapshot.autoSceneDebugfsText, DEFAULT_AUTO_SCENE_DEBUGFS);
+	const state = snapshot.sceneDebugfsState || {};
+	const applied = state.appliedEnabled === 1;
+	const paths = linesFromText(snapshot.sceneDebugfsPathsText || "");
+	const loaded = !!(snapshot.moduleText || "").trim();
+
+	let message = "";
+	if (loaded && configured !== applied) {
+		message = configured
+			? "已保存，热重载或重启后开始自动识别"
+			: "已关闭，热重载或重启后移除已识别路径";
+	} else if (configured && (state.status === "found" || state.status === "late-found") && paths.length) {
+		message = paths.length === 1 ? `已识别：${paths[0]}` : `已识别 ${paths.length} 个 /dev debugfs 挂载点`;
+	} else if (configured && state.status === "no-package") {
+		message = "未安装 Scene，已跳过自动识别";
+	} else if (configured && state.status === "late-watching") {
+		message = "前台扫描未找到，后台监视 Scene 挂载";
+	} else if (configured && state.status === "late-found-pending") {
+		message = "已发现晚启动挂载点，正在受控热重载…";
+	} else if (configured && state.status === "late-reload-retry") {
+		message = "已发现挂载点，自动热重载正在重试";
+	} else if (configured && state.status === "late-reload-failed") {
+		message = "已发现挂载点，但自动热重载失败";
+	} else if (configured && state.status === "watch-timeout") {
+		message = "后台监视超时，可在 Scene 启动后手动热重载";
+	} else if (configured && state.status === "waiting") {
+		message = "正在等待 Scene debugfs 挂载点…";
+	} else if (configured && state.status === "error") {
+		message = "自动识别失败，请查看诊断日志";
+	} else if (configured && state.status === "not-found") {
+		message = "本次未识别到挂载点，其他隐藏路径不受影响";
+	} else if (configured) {
+		message = "热重载或重启时自动识别";
+	}
+
+	node.textContent = message;
+	node.hidden = !message;
 }
 
 function updateHealthList() {
@@ -677,8 +730,11 @@ function updateHealthList() {
 		items.push({ level: "ok", title: `${listName}模式有目标`, body: `包名 ${selected.length} 个，直接 UID ${directUids.length} 个${systemPart}。` });
 	}
 
-	if (targets.length === 0) {
+	const autoSceneEnabled = !!$("#autoSceneDebugfsInput")?.checked;
+	if (targets.length === 0 && !autoSceneEnabled) {
 		items.push({ level: "bad", title: "隐藏路径为空", body: "至少保留一个存在的路径，否则模块不会加载。" });
+	} else if (targets.length === 0) {
+		items.push({ level: "warn", title: "仅依赖 Scene 自动识别", body: "如果等待时间内没有识别到 /dev debugfs，模块将跳过加载。" });
 	} else if (snapshot.targetProbeHidden) {
 		const resolved = Number.isFinite(snapshot.targetResolvedCount) ? snapshot.targetResolvedCount : -1;
 		if (resolved < 0) {
@@ -694,6 +750,29 @@ function updateHealthList() {
 		items.push({ level: "warn", title: "有路径当前不存在", body: "不存在的路径会在内核加载时被跳过。" });
 	} else {
 		items.push({ level: "ok", title: "隐藏路径配置有效", body: `${targets.length} 条路径。` });
+	}
+
+	const sceneState = snapshot.sceneDebugfsState || {};
+	const sceneApplied = sceneState.appliedEnabled === 1;
+	if (loaded && autoSceneEnabled !== sceneApplied) {
+		items.push({ level: "warn", title: "Scene 自动识别配置尚未应用", body: "点击“保存并热重载”或重启后生效。" });
+	} else if (autoSceneEnabled && (sceneState.status === "found" || sceneState.status === "late-found")) {
+		const autoPaths = linesFromText(snapshot.sceneDebugfsPathsText || "");
+		items.push({ level: "ok", title: "Scene debugfs 已自动识别", body: autoPaths.join("\n") || "运行时路径已加入内核目标。" });
+	} else if (autoSceneEnabled && sceneState.status === "no-package") {
+		items.push({ level: "ok", title: "设备未安装 Scene", body: "已跳过自动识别，不等待，也不会匹配其他工具创建的 /dev debugfs。" });
+	} else if (autoSceneEnabled && sceneState.status === "late-watching") {
+		items.push({ level: "warn", title: "正在后台等待 Scene 挂载", body: "其他有效路径已立即加载；后台发现 Scene debugfs 后会执行一次受控热重载。" });
+	} else if (autoSceneEnabled && (sceneState.status === "late-found-pending" || sceneState.status === "late-reload-retry")) {
+		items.push({ level: "warn", title: "已发现晚启动的 Scene debugfs", body: "正在尝试将动态路径补充进内核目标。" });
+	} else if (autoSceneEnabled && sceneState.status === "late-reload-failed") {
+		items.push({ level: "bad", title: "Scene 自动补充热重载失败", body: "挂载点已经识别，但未确认进入内核目标；请手动点击“保存并热重载”。" });
+	} else if (autoSceneEnabled && sceneState.status === "watch-timeout") {
+		items.push({ level: "warn", title: "Scene 后台启动监视超时", body: "Scene 启动后可手动点击“保存并热重载”。" });
+	} else if (autoSceneEnabled && sceneState.status === "not-found") {
+		items.push({ level: "warn", title: "本次未识别到 Scene debugfs", body: "其他有效隐藏路径仍会正常加载；可在 Scene 运行后再次热重载。" });
+	} else if (autoSceneEnabled && sceneState.status === "error") {
+		items.push({ level: "warn", title: "Scene debugfs 自动识别失败", body: "无法读取 mountinfo 或 stat SELinux 上下文，查看脚本日志。" });
 	}
 
 	if (loadFailCount >= 3) {
@@ -1895,6 +1974,9 @@ async function refreshConfig() {
 	const waitText = await readFile(files.waitSeconds);
 	const enableSyscallHooksText = await readFile(files.enableSyscallHooks);
 	const syscallHooksText = await readFile(files.syscallHooks);
+	const autoSceneDebugfsText = await readFile(files.autoSceneDebugfs);
+	const sceneDebugfsPathsText = await readFile(files.sceneDebugfsPaths);
+	const sceneDebugfsStateText = await readFile(files.sceneDebugfsState);
 	const bootStateText = await readFile(files.bootState);
 	const moduleText = await safeExec(`grep '^${MODULE_NAME} ' /proc/modules || true`);
 	const legacyModuleText = await safeExec(`grep '^${LEGACY_MODULE_NAME} ' /proc/modules || true`);
@@ -1910,6 +1992,7 @@ async function refreshConfig() {
 	renderPaths(linesFromText(targetText));
 	$("#hideDirentsInput").checked = (hideText.trim() || "1") !== "0";
 	$("#enableSyscallHooksInput").checked = parseBoolish(enableSyscallHooksText, true);
+	$("#autoSceneDebugfsInput").checked = parseBoolish(autoSceneDebugfsText, DEFAULT_AUTO_SCENE_DEBUGFS);
 	applySyscallHooksToCheckboxes(syscallHooksText);
 	updateSyscallHooksDisabledState();
 	const scope = normalizeScope(scopeText.trim() || "deny");
@@ -1949,6 +2032,10 @@ async function refreshConfig() {
 		waitText,
 		enableSyscallHooksText,
 		syscallHooksText,
+		autoSceneDebugfsText,
+		sceneDebugfsPathsText,
+		sceneDebugfsStateText,
+		sceneDebugfsState: parseSceneDebugfsState(sceneDebugfsStateText),
 		bootStateText,
 		bootState: parseBootState(bootStateText),
 		nowEpoch: Number.parseInt((nowText || "0").trim(), 10) || 0,
@@ -1965,6 +2052,7 @@ async function refreshConfig() {
 
 	await refreshTargetProbe();
 	updateSummary(lastSnapshot);
+	updateAutoSceneDebugfsStatus(lastSnapshot);
 	updateHealthList();
 	scheduleBootPolling(lastSnapshot.bootState);
 }
@@ -1993,6 +2081,25 @@ function parseBootState(text) {
 	return out;
 }
 
+function parseSceneDebugfsState(text) {
+	const out = { enabled: 0, appliedEnabled: 0, status: "", packageStatus: "", count: 0, updated: 0, detail: "" };
+	for (const rawLine of (text || "").split(/\r?\n/)) {
+		const line = rawLine.trim();
+		const idx = line.indexOf("=");
+		if (idx <= 0) continue;
+		const key = line.slice(0, idx);
+		const value = line.slice(idx + 1);
+		if (key === "enabled") out.enabled = Number.parseInt(value, 10) || 0;
+		else if (key === "applied_enabled") out.appliedEnabled = Number.parseInt(value, 10) || 0;
+		else if (key === "status") out.status = value;
+		else if (key === "package_status") out.packageStatus = value;
+		else if (key === "count") out.count = Number.parseInt(value, 10) || 0;
+		else if (key === "updated") out.updated = Number.parseInt(value, 10) || 0;
+		else if (key === "detail") out.detail = value;
+	}
+	return out;
+}
+
 function stopBootPolling() {
 	if (bootPollHandle) {
 		clearInterval(bootPollHandle);
@@ -2001,22 +2108,39 @@ function stopBootPolling() {
 }
 
 function scheduleBootPolling(bootState) {
-	if (!bootState || !BOOT_WAITING_STATES.has(bootState.state)) {
+	const bootWaiting = !!bootState && BOOT_WAITING_STATES.has(bootState.state);
+	const sceneWaiting = SCENE_BACKGROUND_STATES.has(lastSnapshot.sceneDebugfsState?.status || "");
+	if (!bootWaiting && !sceneWaiting) {
 		stopBootPolling();
 		return;
 	}
 	if (bootPollHandle) return;
 	bootPollHandle = setInterval(() => {
 		if (busy) return;
-		readFile(files.bootState).then((text) => {
+		Promise.all([
+			readFile(files.bootState),
+			readFile(files.sceneDebugfsState),
+			readFile(files.sceneDebugfsPaths),
+			safeExec(`grep '^${MODULE_NAME} ' /proc/modules || true`),
+		]).then(([text, sceneText, scenePathsText, moduleText]) => {
 			const next = parseBootState(text);
+			const nextScene = parseSceneDebugfsState(sceneText);
 			const wasWaiting = lastSnapshot.bootState && BOOT_WAITING_STATES.has(lastSnapshot.bootState.state);
+			const wasSceneWaiting = SCENE_BACKGROUND_STATES.has(lastSnapshot.sceneDebugfsState?.status || "");
 			lastSnapshot.bootStateText = text;
 			lastSnapshot.bootState = next;
+			lastSnapshot.sceneDebugfsStateText = sceneText;
+			lastSnapshot.sceneDebugfsState = nextScene;
+			lastSnapshot.sceneDebugfsPathsText = scenePathsText;
+			lastSnapshot.moduleText = moduleText;
 			return safeExec(`date +%s 2>/dev/null || echo 0`).then((nowText) => {
 				lastSnapshot.nowEpoch = Number.parseInt((nowText || "0").trim(), 10) || 0;
+				updateSummary(lastSnapshot);
+				updateAutoSceneDebugfsStatus(lastSnapshot);
 				updateHealthList();
-				if (!BOOT_WAITING_STATES.has(next.state)) {
+				const stillBootWaiting = BOOT_WAITING_STATES.has(next.state);
+				const stillSceneWaiting = SCENE_BACKGROUND_STATES.has(nextScene.status);
+				if (!stillBootWaiting && !stillSceneWaiting) {
 					stopBootPolling();
 					// Transition: was waiting, now terminal. Run one
 					// auto-diagnostic so the verdict box reflects the
@@ -2024,8 +2148,10 @@ function scheduleBootPolling(bootState) {
 					// click. Guarded by `wasWaiting` so we don't fire
 					// twice in a row if the poll catches the state
 					// after a previous tick already saw it terminal.
-					if (wasWaiting) {
-						autoRunDiagnostic("自动诊断中（开机完成）...");
+					if (wasWaiting || wasSceneWaiting) {
+						autoRunDiagnostic(wasSceneWaiting
+							? "自动诊断中（Scene 后台监视完成）..."
+							: "自动诊断中（开机完成）...");
 					}
 				}
 			});
@@ -2240,7 +2366,7 @@ async function validateConfig(options = {}) {
 	const allowSystemUids = scope === "allow" ? collectAllowSystemUids() : [];
 	const packages = [...selectedPackages].sort();
 
-	if (!paths.length) {
+	if (!paths.length && !$("#autoSceneDebugfsInput").checked) {
 		errors.push("隐藏路径为空。");
 	}
 
@@ -2353,6 +2479,7 @@ async function saveConfig() {
 	await writeLines(files.hideDirents, [$("#hideDirentsInput").checked ? "1" : "0"]);
 	await writeLines(files.enableSyscallHooks, [$("#enableSyscallHooksInput").checked ? "1" : "0"]);
 	await writeLines(files.syscallHooks, [collectSyscallHooks().join(",")]);
+	await writeLines(files.autoSceneDebugfs, [$("#autoSceneDebugfsInput").checked ? "1" : "0"]);
 	await writeLines(files.scope, [scope]);
 	syncActiveUidText();
 	await writeLines(files.denyPackages, sortedPackageList("deny"));
@@ -2373,6 +2500,7 @@ async function reloadModule() {
 	await writeLines(files.hideDirents, [$("#hideDirentsInput").checked ? "1" : "0"]);
 	await writeLines(files.enableSyscallHooks, [$("#enableSyscallHooksInput").checked ? "1" : "0"]);
 	await writeLines(files.syscallHooks, [collectSyscallHooks().join(",")]);
+	await writeLines(files.autoSceneDebugfs, [$("#autoSceneDebugfsInput").checked ? "1" : "0"]);
 	await writeLines(files.scope, [scope]);
 	syncActiveUidText();
 	await writeLines(files.denyPackages, sortedPackageList("deny"));
@@ -2383,16 +2511,25 @@ async function reloadModule() {
 	await writeLines(files.waitSeconds, [String(currentWaitSeconds())]);
 	statusText.textContent = "正在热重载...";
 	const output = await execShell(
-		`rm -f ${shellQuote(files.failCount)} ${shellQuote(files.failReason)} 2>/dev/null || true; if grep -q '^${MODULE_NAME} ' /proc/modules 2>/dev/null; then rmmod ${MODULE_NAME}; fi; PATHMASK_RESET_FAIL_GUARD=1 PATHMASK_IGNORE_FAIL_GUARD=1 PATHMASK_WAIT_SECONDS=5 sh ${shellQuote(files.service)}; dmesg | grep -Ei 'pathmask|nohello|unknown symbol|invalid module|exec format|module_layout' | tail -n 30`
+		`rm -f ${shellQuote(files.sceneDebugfsWatchStop)} ${shellQuote(files.failCount)} ${shellQuote(files.failReason)} 2>/dev/null || true; if grep -q '^${MODULE_NAME} ' /proc/modules 2>/dev/null; then rmmod ${MODULE_NAME} || exit 20; fi; if grep -q '^${MODULE_NAME} ' /proc/modules 2>/dev/null; then echo 'pathmask is still loaded after rmmod' >&2; exit 21; fi; PATHMASK_RESET_FAIL_GUARD=1 PATHMASK_IGNORE_FAIL_GUARD=1 PATHMASK_INITIAL_DELAY_SECONDS=0 PATHMASK_WAIT_SECONDS=5 sh ${shellQuote(files.service)}; dmesg | grep -Ei 'pathmask|nohello|unknown symbol|invalid module|exec format|module_layout' | tail -n 30`
 	);
 	setLogContent("kernel", output);
 	await refreshDiagnostics();
-	showToast("热重载完成");
+	const sceneState = lastSnapshot.sceneDebugfsState || {};
+	if ($("#autoSceneDebugfsInput").checked && sceneState.status === "no-package") {
+		showToast("热重载完成；未安装 Scene，已跳过自动识别");
+	} else if ($("#autoSceneDebugfsInput").checked && sceneState.status === "late-watching") {
+		showToast("热重载完成，后台继续等待 Scene 启动");
+	} else if ($("#autoSceneDebugfsInput").checked && sceneState.status !== "found" && sceneState.status !== "late-found") {
+		showToast("热重载完成，但当前未识别到 Scene debugfs");
+	} else {
+		showToast("热重载完成");
+	}
 }
 
 async function pauseHiding() {
 	const output = await execShell(
-		`if grep -q '^${MODULE_NAME} ' /proc/modules 2>/dev/null; then rmmod ${MODULE_NAME}; log -p i -t pathmask 'hidden paths paused from WebUI'; printf 'state=paused\\nupdated=%s\\ndetail=paused via WebUI\\n' "$(date +%s 2>/dev/null || echo 0)" > ${shellQuote(files.bootState)} 2>/dev/null || true; echo 'pathmask unloaded'; else echo 'pathmask is not loaded'; fi; dmesg | grep -Ei 'pathmask|nohello|unknown symbol|invalid module|exec format|module_layout' | tail -n 30`
+		`touch ${shellQuote(files.sceneDebugfsWatchStop)} 2>/dev/null || true; if grep -q '^${MODULE_NAME} ' /proc/modules 2>/dev/null; then rmmod ${MODULE_NAME}; log -p i -t pathmask 'hidden paths paused from WebUI'; printf 'state=paused\\nupdated=%s\\ndetail=paused via WebUI\\n' "$(date +%s 2>/dev/null || echo 0)" > ${shellQuote(files.bootState)} 2>/dev/null || true; echo 'pathmask unloaded'; else printf 'state=paused\\nupdated=%s\\ndetail=paused via WebUI\\n' "$(date +%s 2>/dev/null || echo 0)" > ${shellQuote(files.bootState)} 2>/dev/null || true; echo 'pathmask is not loaded'; fi; dmesg | grep -Ei 'pathmask|nohello|unknown symbol|invalid module|exec format|module_layout' | tail -n 30`
 	);
 	setLogContent("kernel", output);
 	await refreshDiagnostics();
@@ -2405,6 +2542,7 @@ async function restoreDefaults() {
 	await writeLines(files.hideDirents, ["1"]);
 	await writeLines(files.enableSyscallHooks, ["1"]);
 	await writeLines(files.syscallHooks, [DEFAULT_SYSCALL_HOOKS.join(",")]);
+	await writeLines(files.autoSceneDebugfs, [DEFAULT_AUTO_SCENE_DEBUGFS ? "1" : "0"]);
 	await writeLines(files.scope, ["deny"]);
 	await writeLines(files.denyPackages, DEFAULT_DENY_PACKAGES);
 	await writeLines(files.allowPackages, []);
@@ -2457,6 +2595,16 @@ if [ -f ${shellQuote(files.bootState)} ]; then
   cat ${shellQuote(files.bootState)} 2>/dev/null
 else
   echo "(no boot_state file -- service.sh did not run, or persist dir is unwritable)"
+fi
+echo '--- Scene debugfs auto-discovery ---'
+if [ -f ${shellQuote(files.sceneDebugfsState)} ]; then
+  cat ${shellQuote(files.sceneDebugfsState)} 2>/dev/null
+else
+  echo "(no scene_debugfs_state)"
+fi
+if [ -s ${shellQuote(files.sceneDebugfsPaths)} ]; then
+  echo 'runtime paths:'
+  cat ${shellQuote(files.sceneDebugfsPaths)} 2>/dev/null
 fi
 echo '--- legacy config ---'
 for f in ${shellQuote(LEGACY_CONFIGDIR)}/*.conf; do [ -f "$f" ] && echo "### $f" && cat "$f" && echo; done
@@ -2705,6 +2853,7 @@ document.addEventListener("keydown", (event) => {
 
 $("#addPathBtn").addEventListener("click", () => addPathRow());
 $("#pathHelpBtn").addEventListener("click", () => openModal("pathHelpModal"));
+$("#donateBtn").addEventListener("click", () => openModal("donateModal"));
 $("#historyBtn").addEventListener("click", () => runAction("正在加载历史诊断...", openHistoryModal).catch(() => {}));
 $("#historyCopyBtn").addEventListener("click", () => copyText($("#historyView").value).catch((error) => showToast(error.message)));
 $("#loadAppsBtn").addEventListener("click", () => runAction("正在加载应用...", loadApps).catch(() => {}));
@@ -2714,6 +2863,13 @@ $("#refreshBtn").addEventListener("click", () => runAction("正在刷新...", re
 // toggle is flipped, so it visibly tracks the dependency without waiting
 // for the next refresh.
 $("#enableSyscallHooksInput").addEventListener("change", updateSyscallHooksDisabledState);
+$("#autoSceneDebugfsInput").addEventListener("change", () => {
+	const enabled = $("#autoSceneDebugfsInput").checked;
+	const node = $("#autoSceneDebugfsStatus");
+	node.textContent = enabled ? "保存并热重载或重启后生效" : "";
+	node.hidden = !enabled;
+	updateHealthList();
+});
 for (const cb of document.querySelectorAll('#allowSystemUidsDetails input[data-allow-system-uid]')) {
 	cb.addEventListener("change", updateHealthList);
 }

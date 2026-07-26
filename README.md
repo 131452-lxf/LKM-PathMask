@@ -211,7 +211,21 @@ edits these files for you, but they can also be inspected manually:
 
 - `/data/adb/pathmask/target_path.conf`: hidden target paths, one absolute path
   per line. Blank lines and `#` comments are ignored. At least one configured
-  path must exist before the module is loaded.
+  path must exist before the module is loaded unless Scene debugfs
+  auto-discovery is enabled and finds a runtime target.
+- `/data/adb/pathmask/auto_scene_debugfs.conf`: optional Scene debugfs
+  auto-discovery switch. Default `0`. When enabled, the boot service finds
+  `debugfs` mounts below `/dev` whose SELinux context is
+  `u:object_r:debugfs:s0` and adds their complete randomized mount paths to
+  the targets for that load. Results are rediscovered on every boot or hot
+  reload and are not written to `target_path.conf`. Discovery is gated on the
+  official Scene package (`com.omarea.vtools`): when it is definitely absent,
+  the service skips immediately without consuming the wait budget or matching
+  another tool's `/dev` debugfs. When another valid target already exists,
+  Scene discovery is non-blocking: the module loads those targets immediately
+  and a bounded background watcher continues for 10 minutes, performing one
+  controlled reload when Scene's mount appears. The shared foreground deadline
+  is retained only when Scene discovery is the sole possible target.
 - `/data/adb/pathmask/scope_mode.conf`: hide scope. Use `deny` to hide only
   from configured app UIDs, `allow` to hide from everyone except configured
   app UIDs, or `global` to hide from every process.
@@ -237,6 +251,16 @@ edits these files for you, but they can also be inspected manually:
   twice it. The boot service writes its current phase to
   `/data/adb/pathmask/boot_state` so the WebUI can show whether the module is
   still waiting or has decided to skip loading.
+
+The latest Scene auto-discovery result is recorded in
+`/data/adb/pathmask/scene_debugfs_state`, with resolved paths written one per
+line to `/data/adb/pathmask/scene_debugfs_paths`. These are diagnostic runtime
+files, not persistent configuration inputs.
+
+Normal boot loading keeps a 10-second settle delay before using the shared
+wait budget. WebUI hot reloads and Scene late-watcher reloads skip that
+boot-only delay because Android is already running; their existing five-second
+target/UID fallback budget remains unchanged.
 
 ## WebUI Diagnosis
 

@@ -160,7 +160,7 @@ fi
 rm -f "$STAGE_DIR/target_wait_seconds.conf" \
       "$STAGE_DIR/package_wait_seconds.conf" 2>/dev/null || true
 
-chmod 0755 "$STAGE_DIR/service.sh" "$STAGE_DIR/uninstall.sh"
+chmod 0755 "$STAGE_DIR/service.sh" "$STAGE_DIR/scene-debugfs-watch.sh" "$STAGE_DIR/uninstall.sh"
 
 rm -f "$OUTPUT"
 if command -v zip >/dev/null 2>&1; then
@@ -174,6 +174,7 @@ echo "Target paths file:        $STAGE_DIR/target_path.conf"
 echo "Hide dirents file:        $STAGE_DIR/hide_dirents.conf"
 echo "Enable syscall hooks file:$STAGE_DIR/enable_syscall_hooks.conf"
 echo "Syscall hooks subset:     $STAGE_DIR/syscall_hooks.conf"
+echo "Auto Scene debugfs:       $STAGE_DIR/auto_scene_debugfs.conf"
 echo "Scope mode file:          $STAGE_DIR/scope_mode.conf"
 echo "Deny packages file:       $STAGE_DIR/deny_packages.conf"
 echo "Deny UIDs file:           $STAGE_DIR/deny_uids.conf"

@@ -189,6 +189,7 @@ foreach ($confName in @(
     "hide_dirents.conf",
     "enable_syscall_hooks.conf",
     "syscall_hooks.conf",
+    "auto_scene_debugfs.conf",
     "scope_mode.conf",
     "deny_packages.conf",
     "deny_uids.conf",

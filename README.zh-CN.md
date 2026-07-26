@@ -227,7 +227,13 @@ PathMask 的持久化配置都放在 `/data/adb/pathmask`。一般建议用 WebU
 
 `/data/adb/pathmask/target_path.conf`
 
-要隐藏的路径列表，一行一个绝对路径。空行和 `#` 开头的注释会被忽略。模块加载前至少要有一个路径真实存在，否则开机脚本会跳过加载。
+要隐藏的路径列表，一行一个绝对路径。空行和 `#` 开头的注释会被忽略。除非已开启 Scene debugfs 自动识别并找到运行时目标，否则模块加载前至少要有一个路径真实存在。
+
+`/data/adb/pathmask/auto_scene_debugfs.conf`
+
+Scene debugfs 自动识别开关，默认 `0`（关闭）。开启后，启动服务只在确认官方 Scene 包 `com.omarea.vtools` 已安装时，才会查找 `/dev` 下文件系统类型为 `debugfs`、SELinux 上下文为 `u:object_r:debugfs:s0` 的随机挂载点，并把完整挂载路径加入本次运行的隐藏列表。明确未安装 Scene 时会立即跳过，不消耗等待预算，也不会误匹配其他工具的 `/dev` debugfs。已有其他有效隐藏路径时，Scene 自动识别不再阻塞主服务：模块立即加载现有目标，最长 10 分钟的非阻塞后台监视器继续等待 Scene 挂载，并在发现后执行一次受控热重载。只有完全依赖 Scene、没有任何其他有效目标时，才保留原有共享前台等待截止时间。随机路径不会写入 `target_path.conf`，每次开机或热重载都会重新识别。最近一次结果保存在 `scene_debugfs_state` 和 `scene_debugfs_paths`，仅用于诊断。
+
+正常开机仍保留加载前 10 秒稳定等待；WebUI 手动热重载和 Scene 后台补偿热重载发生在系统已经就绪之后，会跳过这段仅供开机使用的延迟，但仍保留原有 5 秒目标/UID 兜底等待。
 
 `/data/adb/pathmask/scope_mode.conf`
 

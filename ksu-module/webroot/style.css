@@ -47,8 +47,18 @@ p {
 }
 
 h1 {
+	display: flex;
+	align-items: baseline;
+	gap: 5px;
 	font-size: 22px;
 	line-height: 1.15;
+	white-space: nowrap;
+}
+
+h1 small {
+	font-size: 12px;
+	font-weight: 650;
+	color: color-mix(in srgb, CanvasText 72%, transparent);
 }
 
 h2 {
@@ -67,6 +77,12 @@ h2 {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+}
+
+.topTextButton {
+	min-width: 48px;
+	padding: 0 9px;
+	font-size: 14px;
 }
 
 .iconButton {
@@ -351,6 +367,21 @@ button:active {
 	gap: 0;
 }
 
+.autoSceneRow {
+	margin: 2px 0 8px;
+}
+
+.autoSceneRow > span:first-child {
+	min-width: 0;
+	font-weight: 600;
+}
+
+.autoSceneRow .hint {
+	max-width: 100%;
+	font-weight: normal;
+	overflow-wrap: anywhere;
+}
+
 .search {
 	margin-bottom: 10px;
 }
@@ -628,6 +659,27 @@ button:active {
 
 .modalBody strong {
 	color: CanvasText;
+}
+
+.donateCard {
+	width: min(600px, 100%);
+}
+
+.donateBody {
+	text-align: center;
+}
+
+.donateQr {
+	display: block;
+	width: 100%;
+	height: auto;
+	margin: 12px auto 8px;
+	border-radius: 10px;
+	background: #fff;
+}
+
+.donateBody .hint {
+	margin-top: 8px;
 }
 
 .subPanel {
