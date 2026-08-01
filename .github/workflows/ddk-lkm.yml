@@ -29,13 +29,15 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v6
 
+    - name: Copy custom vmlinux file
+      run: cp ./vmlinux kernel/
+
     - name: Build pathmask.ko
       run: |
         cd kernel
 
         echo "=== Building pathmask.ko for KMI: ${{ inputs.kmi }} ==="
-
-        CONFIG_KSU=m CC=clang make
+        CONFIG_KSU=m VMLINUX=./vmlinux CC=clang make
 
         echo "=== Build completed ==="
 
